@@ -1,0 +1,842 @@
+---
+title: "Indice_acoustique"
+output: html_document
+date: "2026-01-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+```
+
+Traitement Indice acoustique
+Import sur un DF de tout les indices et audio en 5 et 10 minutes
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_5m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_5m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne
+```{r}
+IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
+
+
+IA_5m <- IA_5m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  select(where(~ !all(is.na(.)))) %>%
+  select(-ADI_val.left_band_values,
+         -ADI_val.left_bandrange_values) %>%
+  rename(Enr = projet)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+
+DF_IA5 <- IA_5m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  select(-Fichier,
+         -EAA)
+
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  select(-Fichier,
+         -EAA)
+```
+
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA5$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques
+DF_IA5$date  <- as.Date(DF_IA5$datetime)
+DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
+DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
+DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
+```
+Centré_réduite les données pour modélisation
+```{r}
+DF_IA5_Scale <- DF_IA5 %>%
+  mutate(
+    across(
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`),
+      scale
+    )
+  )
+DF_IA10_Scale <- DF_IA10 %>%
+  mutate(
+    across(
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
+      scale
+    )
+  )
+```
+```{r}
+IA_5m %>%
+  distinct(Enr, fichier) %>%   # évite les doublons
+  count(Enr, name = "nb_fichiers") %>%
+  mutate(nb_fichiers_x5 = nb_fichiers * 5)
+```
+
+Modèle Complet pour ADI, avec plein de variable corrélé à traiter, ce qui est cool c'est qu'on sait que N/E, S et D_B(m) ne sont pas corrélé avec d'autre, on peut déja les garder. On ne respecte pas les conditions d'hétérogénéité et homoscédasticité btw.
+```{r}
+mod_ADI <- lmer(
+  ADI ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_ADI)
+car::Anova(mod_ADI)
+plot(mod_ADI)
+```
+
+```{r}
+mod_ACI <- lmer(
+  ACI ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_ACI)
+car::Anova(mod_ACI)
+```
+
+```{r}
+mod_AEI <- lmer(
+  AEI ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_AEI)
+car::Anova(mod_AEI)
+```
+
+```{r}
+mod_BIO <- lmer(
+  BIO ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_BIO)
+car::Anova(mod_BIO)
+```
+
+```{r}
+mod_H <- lmer(
+  H ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_H)
+car::Anova(mod_H)
+```
+
+```{r}
+mod_M <- lmer(
+  M ~
+    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_M)
+car::Anova(mod_M)
+```
+
+Modèle null générale avec l'effet aléatoire à prendre en compte
+```{r}
+mod_ADI_nul <- lmer(ADI ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_ADI_nul)
+mod_ACI_nul <- lmer(ACI ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_ACI_nul)
+mod_AEI_nul <- lmer(AEI ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_AEI_nul)
+mod_BIO_nul <- lmer(BIO ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_BIO_nul)
+mod_H_nul <- lmer(H ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_H_nul)
+mod_M_nul <- lmer(M ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
+summary(mod_M_nul)
+```
+
+Graphique pour voir les effets aléatoire entre sites et Commune, à changer entre IA
+```{r}
+ggplot(DF_IA5, aes(x = H, y = Enr)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  labs(
+    x = "H",
+    y = "Site d'enregistrement"
+  ) +
+  theme_minimal()
+ggplot(DF_IA5, aes(x = Commune, y = ADI)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5) +
+  labs(
+    x = "Commune",
+    y = "ADI"
+  ) +
+  theme_minimal()
+```
+Matrice de corrélation du model complet des IA
+```{r}
+# Récupérer la matrice de covariance
+cov_mat <- vcov(mod_ADI)
+# Optionnel : convertir en corrélation pour mieux visualiser
+corrplot(cov2cor(as.matrix(vcov(mod_ADI))))
+```
+Comparaison anova de la réduction de variance entre model null et complet
+```{r}
+anova(mod_ADI,mod_ADI_nul)
+anova(mod_ACI,mod_ACI_nul)
+anova(mod_AEI,mod_AEI_nul)
+anova(mod_BIO,mod_BIO_nul)
+anova(mod_H,mod_H_nul)
+anova(mod_M,mod_M_nul)
+```
+
+Amélioration du modèle en retirant petit à petite les variables pour voir ce qu'il reste, on retire petit à petit les varibales les plus corrélées et les plus logique avec le VIF.
+
+On a retiré d'abord les variable qualitatives car continue puis on regarde le VIF pour les autres variables, on s'arrete avec que des Low correations VIF<3.
+```{r}
+mod_ADI_am <- lmer(
+  ADI ~
+    `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_ADI_am)
+car::Anova(mod_ADI_am)
+check_collinearity(mod_ADI_am)
+anova(mod_ADI_am,mod_ADI_nul)
+```
+```{r}
+# Calcul de la surdispersion
+resid_dev <- sum(residuals(mod_ADI_am, type = "pearson")^2)
+df_resid <- df.residual(mod_ADI_am)
+dispersion <- resid_dev / df_resid
+dispersion
+# Récupérer la matrice de covariance
+cov_mat <- vcov(mod_ADI_am)
+# Optionnel : convertir en corrélation pour mieux visualiser
+corrplot(cov2cor(as.matrix(vcov(mod_ADI_am))))
+```
+ADI en essayant d'inclure la variation cyclique en trigonoétrie, fonctionne pas encore
+```{r}
+mod_ADI_bim <- lmer(
+  ADI ~
+    cos(2*pi*heure_num/14) + sin(2*pi*heure_num/14) + cos(2*pi*heure_num/7) + sin(2*pi*heure_num/7) + (0 + cos(2*pi*heure_num/14) + sin(2*pi*heure_num/14) + cos(2*pi*heure_num/7) + sin(2*pi*heure_num/7)|Enr)
+    (1 | Commune/Enr),
+  data = DF_IA5,
+  REML = FALSE
+)
+
+summary(mod_ADI_bim)
+car::Anova(mod_ADI_bim)
+check_collinearity(mod_ADI_bim)
+anova(mod_ADI_am, mod_ADI_uni, mod_ADI_bim)
+```
+```{r}
+mod_ACI_am <- lmer(
+  ACI ~
+ `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_ACI_am)
+car::Anova(mod_ACI_am)
+anova(mod_ACI_am,mod_ACI_nul)
+check_collinearity(mod_ACI_am)
+```
+
+```{r}
+library(lme4)
+mod_AEI_am <- lmer(
+  AEI ~
+ `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+
+summary(mod_AEI_am)
+car::Anova(mod_AEI_am)
+anova(mod_AEI_am,mod_AEI_nul)
+check_collinearity(mod_AEI_am)
+```
+```{r}
+mod_BIO_am <- lmer(
+  BIO ~
+ `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_BIO_am)
+car::Anova(mod_BIO_am)
+anova(mod_BIO_am,mod_BIO_nul)
+check_collinearity(mod_BIO_am)
+```
+```{r}
+mod_H_am <- lmer(
+  H ~
+ `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_H_am)
+car::Anova(mod_H_am)
+anova(mod_H_am,mod_H_nul)
+check_collinearity(mod_H_am)
+```
+```{r}
+mod_M_am <- lmer(
+  M ~
+ `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+  data = DF_IA5_Scale,
+  REML = FALSE
+)
+summary(mod_M_am)
+car::Anova(mod_M_am)
+anova(mod_M_am,mod_M_nul)
+check_collinearity(mod_M_am)
+```
+Modèle sur la variable habitat avec LMER et GAM, en incluant le modèle cyclique aussi
+```{r}
+library(mgcv)
+mod_hab_bio <-lmer(ADI ~ `Hab` + (1|Commune/Enr), data = DF_IA5)
+summary(mod_hab_bio)
+car::Anova(mod_hab_bio)
+
+DF_IA5$Enr <- as.factor(DF_IA5$Enr)
+DF_IA5$Commune <- as.factor(DF_IA5$Commune)
+DF_IA5$heure_num <- as.numeric(DF_IA5$heure_num)
+
+DF_filtre <- DF_IA5 %>%
+  mutate(heure_num = as.numeric(heure_num)) %>%
+  group_by(Enr, date) %>%
+  filter(setequal(unique(heure_num), 4:17)) %>%
+  ungroup()
+DF_filtre %>%
+  count(date)
+DF_IA5 %>%
+  group_by(date) %>%
+  summarise(
+    n = n(),
+    ok = setequal(unique(heure_num), 4:17)
+  )
+
+g0 <- gam(ADI ~ Hab +
+        s(Commune, bs="re") +
+        s(Enr, bs="re"),
+    data = DF_IA5)
+summary(g0)
+anova.gam(g0)
+
+g1 <- gam(ADI ~ Hab +
+        s(heure_num, bs="cr") +
+        s(Commune, bs="re") +
+        s(Enr, bs="re"),
+    data = DF_IA5)
+summary(g1)
+anova.gam(g1)
+
+
+g2 <- gam(ADI ~ Hab +
+        s(heure_num, bs="cc", k=7) +
+        s(heure_num, bs = "cc", k=7, by = Enr) +
+        s(Commune, bs="re") +
+        s(Enr, bs="re"),
+        knots = list(heure_num = c(4,17)),
+    data = DF_IA5)
+summary(g2)
+anova.gam(g2)
+
+g3 <- gam(ADI ~ Hab +
+        s(heure_num, bs="cc", k=7) +
+        s(heure_num, bs = "cc", k=7, by = Enr) +
+        s(Commune, bs="re") +
+        s(Enr, bs="re"),
+        knots = list(heure_num = c(4,17)),
+    data = DF_filtre)
+summary(g3)
+anova.gam(g3)
+```
+```{r}
+summary(lmer(ADI ~ `N/E` + (1|Commune/Enr), data = DF_IA5))
+car::Anova(lmer(ASI ~ `N/E`+ (1|Commune/Enr), data = DF_IA5))
+```
+Test simplement Indice x Variable de richesse et N/E
+```{r}
+summary(lmer(BIO ~ `S` + (1|Commune/Enr), data = DF_IA5))
+car::Anova(lmer(BIO ~ `S` + (1|Commune/Enr), data = DF_IA5))
+```
+
+NUl POUR L'INSTANT, ptet pas la bonne technique
+```{r}
+# ---------------------------
+library(ape)
+
+# coords = Longitude, Latitude
+coords <- as.matrix(Data_Globale_Tahiti[, c("Longitude", "Latitude")])
+
+library(geosphere)
+dist_matrix <- distm(coords)
+
+# construire matrice poids = 1 / distance
+weight_matrix <- 1 / dist_matrix
+
+# remplacer Inf par 0 (distance 0 = même point)
+weight_matrix[is.infinite(weight_matrix)] <- 0
+
+# diagonale = 0
+diag(weight_matrix) <- 0
+
+# standardiser par ligne
+row_sums <- rowSums(weight_matrix)
+# éviter division par zéro
+row_sums[row_sums == 0] <- 1
+weight_matrix <- weight_matrix / row_sums
+
+# variable réponse
+species <- DF_IA5$S
+
+# calcul Moran's I
+morans_result <- Moran.I(species, weight_matrix)
+morans_result
+#Observed ≈ Expected → pas d’autocorrélation spatiale
+#Observed > Expected (positif) → agrégation spatiale
+#Observed < Expected (négatif) → dispersion spatiale
+
+#+ Regarder la correlation des indices entre eux ducoup
+
+```
+
+```{r}
+library(writexl)
+
+indices <- c("ACI","ADI","AEI","BIO","H","M")
+
+#Moyenne par Mean et SD
+full_day <- DF_IA5 %>%
+  group_by(Enr) %>%
+  summarise(
+    S = first(S),
+    across(all_of(indices),
+           list(mean = mean,
+                sd = sd),
+           na.rm = TRUE)
+  )
+
+table_predictors <- full_day %>%
+  summarise(across(-c(Enr, S),
+                   list(mean = mean,
+                        sd = sd),
+                   na.rm=TRUE))
+
+print(table_predictors)
+
+full_day_z <- full_day %>%
+  mutate(across(-c(Enr, S), scale))
+
+corr_matrix <- cor(full_day_z %>%
+                     select(-Enr, -S),
+                   method="spearman",
+                   use="complete.obs")
+
+corrplot(corr_matrix, method="color")
+
+predictors <- names(full_day_z)[!(names(full_day_z) %in% c("Enr","S"))]
+
+comb1 <- combn(predictors, 1, simplify=FALSE)
+comb2 <- combn(predictors, 2, simplify=FALSE)
+
+all_combos <- c(comb1, comb2)
+
+results_discrete <- data.frame()
+
+for(i in seq_along(all_combos)){
+  
+  vars <- all_combos[[i]]
+  
+  form <- as.formula(paste("S ~", paste(vars, collapse="+")))
+  
+  m <- glm(form, data = full_day_z)
+  
+  col <- check_collinearity(m)
+  
+  if(max(col$VIF, na.rm=TRUE) < 2){
+    
+    results_discrete <- rbind(results_discrete,
+                              data.frame(
+                                model = paste(vars, collapse="+"),
+                                AIC = AIC(m),
+                                R2 = performance::r2(m)$R2,
+                                model_obj = I(list(m))
+                              ))
+  }
+}
+
+results_discrete <- results_discrete %>% arrange(AIC)
+print(results_discrete)
+best_discrete <- results_discrete$model_obj[[1]]
+
+summary(best_discrete)
+```
+
+
+```{r}
+pca_data <- full_day_z %>%
+  select(-Enr, -S)
+pca_res <- prcomp(pca_data, scale.=FALSE)
+summary(pca_res)
+
+full_day_z$PC1 <- pca_res$x[,1]
+full_day_z$PC2 <- pca_res$x[,2]
+
+pooled_models <- list(
+  glm(S ~ PC1, data=full_day_z),
+  glm(S ~ PC2, data=full_day_z),
+  glm(S ~ PC1 + PC2, data=full_day_z)
+)
+
+results_pooled <- data.frame()
+
+for(i in seq_along(pooled_models)){
+  
+  m <- pooled_models[[i]]
+  
+  results_pooled <- rbind(results_pooled,
+                          data.frame(
+                            model = deparse(formula(m)),
+                            AIC = AIC(m),
+                            R2 = performance::r2(m)$R2,
+                            model_obj = I(list(m))
+                          ))
+}
+
+results_pooled <- results_pooled %>% arrange(AIC)
+print(results_pooled)
+
+best_pooled <- results_pooled$model_obj[[1]]
+summary(best_pooled)
+```
+
+
+```{r}
+table_best_models <- data.frame(
+  Model_Type = c("Discrete","Pooled"),
+  Best_Model = c(results_discrete$model[1],
+                 results_pooled$model[1]),
+  R2 = c(results_discrete$R2[1],
+         results_pooled$R2[1]),
+  AIC = c(results_discrete$AIC[1],
+          results_pooled$AIC[1])
+)
+
+print(table_best_models)
+```
+
+
+```{r}
+# 1️⃣ Filtrer seulement modèles à 1 prédicteur
+results_discrete_1var <- results_discrete %>%
+  filter(!grepl("\\+", model))  # pas de "+" dans le nom = modèle à 1 variable
+
+# 2️⃣ Extraire les coefficients filtrés
+coef_discrete_1var <- lapply(results_discrete_1var$model_obj, function(m) {
+  data.frame(
+    Variable = names(coef(m)),
+    Beta = coef(m),
+    SE = sqrt(diag(vcov(m))),
+    Lower = coef(m) - 1.96*sqrt(diag(vcov(m))),
+    Upper = coef(m) + 1.96*sqrt(diag(vcov(m)))
+  ) %>%
+    filter(
+      Variable != "(Intercept)" &
+      grepl(paste0(indices, collapse="|"), Variable) &
+      !grepl(":", Variable)
+    )
+})
+
+# 3️⃣ Combiner tous dans un tableau
+coef_discrete_1var_df <- do.call(rbind, coef_discrete_1var)
+coef_discrete_1var_df
+```
+
+
+```{r}
+coef_pooled <- data.frame(
+  Variable = names(coef(best_pooled)),
+  Beta = coef(best_pooled),
+  SE = sqrt(diag(vcov(best_pooled))),
+  Lower = coef(best_pooled) - 1.96 * sqrt(diag(vcov(best_pooled))),
+  Upper = coef(best_pooled) + 1.96 * sqrt(diag(vcov(best_pooled)))
+)
+```
+```{r}
+write_xlsx(list(
+  Predictors_Table = table_predictors,
+  Discrete_Results = results_discrete,
+  Pooled_Results = results_pooled,
+  Best_Models = table_best_models,
+  Coef_Discrete = coef_discrete_1var_df,
+  Coef_Pooled = coef_pooled,
+  Coef_table = coef_table
+),
+"Ecoacoustic_results2.xlsx")
+```
+
+
+```{r}
+check_model(best_model)
+formula(best_model)
+coef(best_model)
+
+plot(full_day_z$S,
+     predict(best_model),
+     pch = 16,
+     xlab = "Observed richness",
+     ylab = "Predicted richness")
+
+abline(0, 1, lwd = 2)
+
+text(min(full_day_z$S),
+     max(predict(best_model)),
+     labels = paste("R² =", round(performance::r2(best_model)$R2, 2)),
+     pos = 4)
+```
+
+
+```{r}
+ggplot(full_day_z, aes(x = AEI_mean , y = S)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    x = "Scaled AEI mean",
+    y = "Bird species richness",
+    caption = "Shaded area = 95% CI; points = observed values; N = 50"
+  ) +
+  theme_classic()
+
+model_S_AEI <- lm(S ~ AEI_mean, data = full_day)
+
+DF_AEI_Pre <- full_day[, c("Enr", "S", "AEI_mean")]
+
+DF_AEI_Pre$predicted <- predict(model_S_AEI)
+
+# 1. Convertir AEI_mean en numeric
+AEI_numeric <- as.numeric(DF_AEI_Pre$AEI_mean)
+
+# 2. Créer le data frame pour prédictions lisses
+newdata <- data.frame(AEI_mean = seq(min(AEI_numeric),
+                                     max(AEI_numeric), length.out = 50))
+
+# 3. Predict
+pred <- predict(model_S_AEI, newdata, se.fit = TRUE)
+
+newdata$predicted <- pred$fit
+newdata$se_lower <- pred$fit - 1.96 * pred$se.fit
+newdata$se_upper <- pred$fit + 1.96 * pred$se.fit
+
+r2_val <- round(summary(model_S_AEI)$r.squared, 2)
+
+ggplot() +
+  geom_point(data = DF_AEI_Pre, aes(x = as.numeric(AEI_mean), y = S), color = "black") +
+  geom_line(data = newdata, aes(x = AEI_mean, y = predicted), color = "red") +
+  geom_ribbon(data = newdata, aes(x = AEI_mean, ymin = se_lower, ymax = se_upper), alpha = 0.2) +
+  labs(x = "AEI mean", y = "Bird species richness") +
+  annotate("text", x = min(AEI_numeric), y = max(DF_AEI_Pre$S), 
+           label = paste("R² =", r2_val), hjust = 0, vjust = 1, size = 5) +
+  theme_classic()
+```
+
+```{r}
+
+```
+
+
+```{r}
+aei_model <- results_discrete$model_obj[[3]]
+coef(aei_model)
+
+plot(full_day_z$S,
+     predict(aei_model),
+     pch = 16,
+     xlab = "Observed richness",
+     ylab = "Predicted richness")
+
+abline(0, 1, lwd = 2)
+
+text(min(full_day_z$S),
+     max(predict(aei_model)),
+     labels = paste("R² =", round(performance::r2(aei_model)$R2, 2)),
+     pos = 4)
+summary(aei_model )
+
+```
+```{r}
+library(MuMIn)
+
+# 1️⃣ Calculer AICc et Akaike weights pour les modèles à 1 variable
+results_discrete_1var$AICc <- sapply(results_discrete_1var$model_obj, AICc)
+results_discrete_1var$Weight <- Weights(results_discrete_1var$AICc)
+
+# 2️⃣ Calculer la somme des Akaike weights pour chaque variable (Mean et SD séparés)
+# Les colonnes dans full_day_z sont comme "ACI_mean", "ACI_sd", etc.
+predictors_1var <- names(full_day_z)[!(names(full_day_z) %in% c("Enr","S"))]
+
+variable_weights <- sapply(predictors_1var, function(var) {
+  sum(results_discrete_1var$Weight[sapply(results_discrete_1var$model, function(m) grepl(var, m))], na.rm = TRUE)
+})
+
+# 3️⃣ Ajouter les poids dans le tableau des coefficients
+coef_discrete_1var_df <- coef_discrete_1var_df %>%
+  mutate(
+    Akaike_Weight = variable_weights[Variable],   # récupère le poids correspondant
+    Beta_SE = paste0("(", round(Beta, 3), "; ", round(SE, 3), ")"),
+    Bold = Akaike_Weight > 0.7
+  )
+
+# 4️⃣ Afficher le tableau final
+print(coef_discrete_1var_df)
+```
+
+```{r}
+library(kableExtra)
+
+models_tbl <- table_best_models %>%
+  transmute(
+    Section = "Highest ranking models",
+    Var = Model_Type,
+    W = Best_Model,
+    BetaCI = sprintf("%.2f", R2),
+    Extra = (""),
+  )
+
+predictors_tbl <- coef_discrete_1var_df %>%
+  transmute(
+    Section = "Predictor variables",
+    Var = Variable,
+    W = sprintf("%.2f", Akaike_Weight),
+    BetaCI = sprintf("%.3f (%.3f ; %.3f)", Beta, Lower, Upper),
+    Extra = ""
+  )
+
+final_table <- bind_rows(models_tbl, predictors_tbl)
+print(final_table)
+
+
+kable(
+  final_table %>% select(-Section),
+  escape = FALSE,
+  col.names = c("", "", "", ""),
+  align = c("l","c","c","c")
+) %>%
+  kable_styling(full_width = FALSE) %>%
+  pack_rows(
+    "Highest ranking models",
+    1,
+    nrow(models_tbl)
+  ) %>%
+  pack_rows(
+    "Predictor variables",
+    nrow(models_tbl) + 1,
+    nrow(final_table)
+  ) %>%
+  add_header_above(c("Full day (05:00–19:54)" = 5))
+```
+
+

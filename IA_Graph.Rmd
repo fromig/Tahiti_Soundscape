@@ -1,0 +1,709 @@
+---
+title: "IA_Graph"
+output: html_document
+date: "2026-01-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(see)
+library(tidyr)
+```
+
+Traitement Indice acoustique
+Import des excel 5 et 10m avec les varibales Enr sur DF_IA5 et DF_IA10
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_5m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_5m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Nettoyage des indices acoustiques et on garde une ligne par fichier
+```{r}
+IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
+  select(where(~ !all(is.na(.)))) %>%
+  select(-ADI_val.left_band_values,
+         -ADI_val.left_bandrange_values) %>%
+  rename(Enr = projet)
+IA_5m <- IA_5m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  select(where(~ !all(is.na(.)))) %>%
+  select(-ADI_val.left_band_values,
+         -ADI_val.left_bandrange_values) %>%
+  rename(Enr = projet)
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+
+DF_IA5 <- IA_5m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  select(-Fichier,
+         -EAA)
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  select(-Fichier,
+         -EAA)
+```
+Ajoute de variable heure pour analyse temporelle
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
+
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA5$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+
+# Colonnes pratiques
+DF_IA5$date  <- as.Date(DF_IA5$datetime)
+DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
+DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
+DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
+```
+Centré_réduite les données pour modélisation
+```{r}
+DF_IA5_Scale <- DF_IA5 %>%
+  mutate(
+    across(
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
+      scale
+    )
+  )
+DF_IA10_Scale <- DF_IA10 %>%
+  mutate(
+    across(
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
+      scale
+    )
+  )
+```
+
+```{r}
+Data_Global_Long <- pivot_longer(Data_Globale_Tahiti,
+                          cols = c(`Arb(%)`, `Arbu(%)`, `Her(%)`),
+                          names_to = "Vegetation",
+                          values_to = "Pourcentage")
+```
+Graphs des Pourcentages de Végétation par habitats
+```{r}
+ggplot(Data_Global_Long, aes(x = Hab, y = Pourcentage, fill = Vegetation)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Type de milieu",
+       y = "Pourcentage (%)",
+       fill = "Végétation") +
+  scale_fill_grey(start = 0.3, end = 0.8) +
+  theme_minimal()
+```
+```{r}
+ggplot(DF_IA5, aes(x = datetime, y = ACI, group = Enr)) +
+  geom_line(color = "grey30") +
+  facet_wrap(~ Enr, scales = "free_x") +
+  theme_minimal() +
+  labs(
+    x = "Temps (jour × heure)",
+    y = "ACI",
+    title = "Dynamique temporelle de l’ACI par site"
+  )
+```
+
+Code pour avoir des graph temporels par Commune ou autre, chaque jour est indiqué, les graph sont plus ou moins complet en fonction de quand commence ou se termine les enregistrements.
+
+```{r}
+# 1️⃣ Filtrer ILM_Paea et trier proprement
+DF_focus <- DF_IA5 %>%
+  filter(Commune == "Pirae") %>%
+  arrange(date, datetime)
+
+# 2️⃣ Créer un index horaire par jour
+#    → 1 = premier enregistrement du jour, quel que soit l'heure réelle
+DF_focus <- DF_focus %>%
+  group_by(date) %>%
+  mutate(hour_index = dense_rank(datetime)) %>%
+  ungroup()
+
+# 3️⃣ Supprimer les journées trop courtes
+#    (ici au moins 8 heures mesurées – ajuste si besoin)
+min_hours <- 8
+
+DF_focus <- DF_focus %>%
+  group_by(date) %>%
+  filter(n_distinct(hour_index) >= min_hours) %>%
+  ungroup()
+
+DF_focus <- DF_focus %>%
+  arrange(Enr, datetime) %>%
+  group_by(Enr) %>%
+  mutate(time_index = row_number()) %>%
+  ungroup()
+# 4️⃣ Vérification (optionnelle)
+# distinct(date, hour_index, heure) %>% arrange(date, hour_index)
+day_breaks <- DF_focus %>%
+  arrange(datetime) %>%
+  group_by(date) %>%
+  summarise(start_index = min(time_index)) %>%
+  ungroup()
+
+ggplot(DF_focus,
+       aes(x = time_index,
+           y = ACI,
+           color = Enr,
+           group = Enr)) +
+
+  geom_line(linewidth = 0.6) +
+
+  geom_vline(data = day_breaks,
+             aes(xintercept = start_index),
+             color = "grey60",
+             linetype = "dashed",
+             linewidth = 0.4,
+             inherit.aes = FALSE) +
+
+  scale_x_continuous(
+    breaks = day_breaks$start_index,
+    labels = format(day_breaks$date, "%d-%m")
+  ) +
+
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+
+  labs(
+    x = "Date",
+    y = "ACI",
+    color = "Enregistreur"
+  )
+```
+La même pour tout les indices en même temps
+```{r}
+DF_long <- DF_focus %>%
+  pivot_longer(
+    cols = c(ACI, ADI, AEI, BIO, M, H),
+    names_to = "Indice",
+    values_to = "Valeur"
+  )
+ggplot(DF_long,
+       aes(x = time_index,
+           y = Valeur,
+           color = Enr,
+           group = Enr)) +
+
+  geom_line(linewidth = 0.6) +
+  geom_vline(data = day_breaks,
+             aes(xintercept = start_index),
+             color = "grey60",
+             linetype = "dashed",
+             linewidth = 0.4,
+             inherit.aes = FALSE) +
+
+  scale_x_continuous(
+    breaks = day_breaks$start_index,
+    labels = format(day_breaks$date, "%d-%m")
+  ) +
+
+  facet_wrap(~ Indice, scales = "free_y", ncol = 2) +
+
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  ) +
+
+  labs(
+    x = "Date",
+    y = "Valeur de l’indice",
+    color = "Enregistreur",
+    title = "Dynamiques temporelles des indices acoustiques – Pirae",
+    subtitle = paste0(
+      "1 ligne = 1 enregistreur · séparateurs = changement de jour · ",
+      "journées ≥ ", min_hours, " h conservées"
+    )
+  )
+```
+Dynamique temporelle globale par Habitat, pour tout les sites dispersés dans le temps
+```{r}
+### 2️⃣ INDEX HORAIRE PAR JOUR
+DF_focus <- DF_IA5 %>%
+  arrange(date, datetime, heure_num)   %>%
+  group_by(date) %>%
+  mutate(hour_index = dense_rank(datetime)) %>%
+  ungroup()
+### 2️⃣ MOYENNE + SE PAR HABITAT / DATE / HEURE
+DF_hab <- DF_focus %>%
+  group_by(Hab, date, heure_num) %>%
+  summarise(
+    ADI_mean = mean(ADI, na.rm = TRUE),
+    ADI_sd   = sd(ADI, na.rm = TRUE),
+    n        = n(),
+    ADI_se   = ADI_sd / sqrt(n),
+    .groups = "drop"
+  )
+### 3️⃣ CRÉER INDEX TEMPS CONTINU (POUR PLOT)
+DF_hab <- DF_hab %>%
+  arrange(Hab, date, heure_num) %>%
+  group_by(Hab) %>%
+  mutate(time_index = row_number()) %>%
+  ungroup()
+### 4️⃣ POSITIONS DÉBUT JOURNÉE (LIGNES VERTICALES)
+day_breaks <- DF_hab %>%
+  group_by(date) %>%
+  summarise(start_index = min(time_index), .groups = "drop")
+### 5️⃣ PLOT FINAL
+p <- ggplot(DF_hab,
+       aes(x = time_index,
+           y = ADI_mean,
+           color = Hab,
+           fill = Hab,
+           group = Hab)) +
+  # SE ribbon
+  geom_ribbon(aes(ymin = ADI_mean - ADI_se,
+                  ymax = ADI_mean + ADI_se),
+              alpha = 0.2,
+              colour = NA) +
+  # Ligne moyenne
+  geom_line(linewidth = 1) +
+  # Lignes verticales changement jour
+  geom_vline(data = day_breaks,
+             aes(xintercept = start_index),
+             color = "grey60",
+             linetype = "dashed",
+             linewidth = 0.4,
+             inherit.aes = FALSE) +
+  # Axe X avec dates
+  scale_x_continuous(
+    breaks = day_breaks$start_index,
+    labels = format(day_breaks$date, "%d-%m")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "ADI moyen",
+    color = "Habitat",
+    fill = "Habitat"
+  )
+print(p)
+```
+
+
+```{r}
+# Forcer l'ordre des habitats
+Data_Globale_Tahiti$Hab <- factor(
+  Data_Globale_Tahiti$Hab,
+  levels = c("Urbain", "Suburbain", "Prairie", "Forêt")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(DF_IA5,
+       aes(x = Hab, y = ADI)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Habitat",
+    y = "ADI",
+    title = "Boxplot de l'ADI par type d'habitat"
+  ) +
+  
+  theme_minimal()
+```
+
+```{r}
+ggplot(DF_IA5, aes(x = S, y = BIO, group = Enr)) +
+  stat_summary(fun = mean, geom = "point", size = 2) +
+  geom_smooth(
+    aes(group = 1),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  labs(
+    x = "N/E (moyenne par Enr)",
+    y = "BIO (moyenne par Enr)"
+  ) +
+  theme_minimal()
+ggplot(DF_IA5, aes(x = `N/E`, y = BIO, group = Enr)) +
+  stat_summary(fun = mean, geom = "point", size = 2) +
+  geom_smooth(
+    aes(group = 1),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  labs(
+    x = "N/E (moyenne par Enr)",
+    y = "BIO (moyenne par Enr)"
+  ) +
+  theme_minimal()
+
+```
+
+Graphique des liens entre indices et Variable de S et N/E
+```{r}
+indices <- c("ACI", "ADI", "AEI", "BIO", "H", "M")
+DF_long <- DF_IA5 %>%
+  pivot_longer(
+    cols = all_of(indices),
+    names_to = "Indice",
+    values_to = "Valeur"
+  )
+DF_summary <- DF_long %>%
+  group_by(S, Indice) %>%
+  summarise(
+    mean_val = mean(Valeur, na.rm = TRUE),
+    sd_val   = sd(Valeur, na.rm = TRUE),
+    .groups = "drop"
+  )
+ggplot(DF_summary,
+       aes(x = S,
+           y = mean_val)) +
+  geom_point(size = 2) +
+  geom_line () +
+  geom_errorbar(
+    aes(ymin = mean_val - sd_val,
+        ymax = mean_val + sd_val),
+    width = 0.2
+  ) +
+  facet_wrap(~ Indice, scales = "free_y", ncol = 1) +
+  theme_minimal() +
+  labs(
+    x = "Richesse observée",
+    y = "Valeur de l’indice acoustique",
+    title = "Variabilité des indices acoustiques pour une richesse donnée",
+    subtitle = "Points = moyenne par indice · barres = ± écart-type (variation intra-site)"
+  )
+```
+
+Graphique de réduction de la variance des indices avec l'effet d'enregistrement acoustique
+```{r}
+# 1️⃣ Préparer effort réseau
+DF_IA5 <- DF_IA5 %>%
+  arrange(Enr, datetime) %>%
+  group_by(Enr) %>%
+  mutate(Hour_rank = row_number()) %>%
+  ungroup()
+
+# 2️⃣ Effort max commun
+max_hour <- DF_IA5 %>%
+  group_by(Enr) %>%
+  summarise(n = max(Hour_rank)) %>%
+  summarise(mean(n)) %>%
+  pull()
+
+# 3️⃣ Fonction SE réseau %
+calc_network_se <- function(data, var, h){
+  vals <- data %>%
+    filter(Hour_rank <= h) %>%
+    pull({{var}})
+  se <- sd(vals, na.rm=TRUE) / sqrt(sum(!is.na(vals)))
+  mean_val <- mean(vals, na.rm=TRUE)
+  (se / mean_val) * 100
+}
+
+# 4️⃣ Calcul courbes effort
+indices <- c("ACI","ADI","AEI","BIO","H","M")
+res_all <- data.frame()
+for(ind in indices){
+  for(h in 1:max_hour){
+    se_val <- calc_network_se(DF_IA5, !!sym(ind), h)
+    res_all <- rbind(res_all,
+      data.frame(
+        Index = ind,
+        Effort = h,
+        SE = se_val
+      )
+    )
+  }
+}
+
+# 5️⃣ Weibull 4 paramètres
+weibull_fun <- function(t, Asym, Drop, lrc, pwr){
+  Asym + Drop * exp(-(lrc * t)^pwr)
+}
+
+# 6️⃣ Fit modèles + SD résiduelle
+models <- list()
+sd_resid <- data.frame()
+for(ind in indices){
+  df_ind <- res_all %>% filter(Index == ind)
+  mod <- try(
+    nls(
+      SE ~ weibull_fun(Effort, Asym, Drop, lrc, pwr),
+      data = df_ind,
+      start = list(
+        Asym = min(df_ind$SE, na.rm=TRUE),
+        Drop = -diff(range(df_ind$SE, na.rm=TRUE)),
+        lrc = 0.5,
+        pwr = 0.5
+      ),
+      control = nls.control(maxiter = 500)
+    ),
+    silent = TRUE
+  )
+  models[[ind]] <- mod
+  if(class(mod)[1] != "try-error"){
+    sd_resid <- rbind(
+      sd_resid,
+      data.frame(
+        Index = ind,
+        SD = sd(residuals(mod), na.rm=TRUE)
+      )
+    )
+  }
+}
+
+# 7️⃣ Prédictions + bandes SD
+res_all$Pred <- NA
+res_all$SD <- NA
+for(ind in indices){
+  mod <- models[[ind]]
+  if(class(mod)[1] != "try-error"){
+    idx <- res_all$Index == ind
+    res_all$Pred[idx] <- predict(mod)
+    sd_val <- sd_resid$SD[sd_resid$Index == ind]
+    res_all$SD[idx] <- sd_val
+  }
+}
+res_all <- res_all %>%
+  mutate(
+    Pred_low = Pred - SD,
+    Pred_high = Pred + SD
+  )
+# 8️⃣ Figure publication style
+ggplot(res_all, aes(Effort, SE, color = Index)) +
+  geom_point(alpha = 0.4) +
+  geom_line(aes(y = Pred), linewidth = 1.2) +
+  geom_ribbon(
+    aes(ymin = Pred_low, ymax = Pred_high, fill = Index),
+    alpha = 0.2,
+    color = NA
+  ) +
+  labs(
+    x = "Equivalent recording hours per site",
+    y = "Relative standard error (%)",
+    title = "Reduction in variance of acoustic indices vs sampling effort",
+    subtitle = "Weibull nonlinear regression ± 1 SD"
+  ) +
+  theme_minimal()
+
+# 9️⃣ Résumé modèles
+for(ind in indices){
+  cat("\n======", ind, "======\n")
+  if(class(mod)[1] == "try-error"){
+  print(paste("FAILED:", ind))
+  }
+}
+```
+```{r}
+# =========================
+# TABLE 1 — Highest ranking models (Full day)
+# =========================
+
+highest_models_full_day <- data.frame(
+  Model_Type = c("Discrete-indices model", "Pooled-index model"),
+  Model_Formula = c("S ~ AEI_mean + BIO_mean", "S ~ PC1 + PC2"),
+  R2 = c(0.23, 0.18),
+  stringsAsFactors = FALSE
+)
+
+highest_models_full_day
+
+
+# =========================
+# TABLE 2 — Predictor variables (Full day)
+# ΣwAIC ; β (CI)
+# =========================
+
+predictor_full_day <- data.frame(
+  Predictor = c(
+    "AEI mean",
+    "ADI mean",
+    "ACI mean",
+    "H mean",
+    "BIO mean",
+    "BIO sd",
+    "AEI sd",
+    "ACI sd",
+    "H sd",
+    "ADI sd",
+    "M sd",
+    "M mean"
+  ),
+  
+  Sum_wAIC = c(
+    0.17,
+    0.08,
+    0.14,
+    0.09,
+    0.08,
+    0.14,
+    0.02,
+    0.96
+  ),
+  
+  Beta = c(
+    0,682,
+    -0,554,
+    0,477,
+    -0,419,
+    0,339,
+    0,310,
+    -0,28,
+    0,209,
+    0,177,
+    -0,172,
+    0,163,
+    -0,108,
+  ),
+  
+  CI_lower = c(
+    0,287,
+    -0,964,
+    0,06,
+    -0,842,
+    -0,089,
+    -0,119,
+    -0,712,
+    -0,225,
+    -0,258,
+    -0,608,
+    -0,273,
+    -0,546
+  ),
+  
+  CI_upper = c(
+    1,076,
+    -0,143,
+    0,895,
+    0,003,
+    0,767,
+    0,74,
+    0,151,
+    0,644,
+    0,613,
+    0,264,
+    0,599,
+    0,329
+  ),
+  
+  stringsAsFactors = FALSE
+)
+
+predictor_full_day
+```
+
+

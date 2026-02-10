@@ -1,0 +1,338 @@
+---
+title: "DescriptionSite_Alt_UG"
+output: html_document
+date: "2026-01-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+setwd("~/Césure/Tahiti")
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+```
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = `Alt(m)`, y = `HSA(%)`, color = Hab)) +
+  geom_point(size = 3) +
+  labs(
+    x = "Altitude (m)",
+    y = "HSA(%)",
+    color = "Habitat",
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = Enr, y = `HSA(%)`)) +
+  geom_col(fill = "grey") +
+    scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Site",
+    y = "HSA (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r}
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    jours_enregistrement = as.numeric(
+      difftime(Fin, Début, units = "days")
+    )
+  )
+total_jours <- sum(Data_Globale_Tahiti$jours_enregistrement, na.rm = TRUE)
+
+total_jours
+```
+
+
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = `Alt(m)`, y = `N/E`, shape = Hab)) +
+  geom_point(size = 1.8) +
+  geom_smooth(aes(group = 1 ), method = "lm", se = TRUE, color = "black") +
+  labs(
+    x = "Altitude (m)",
+    y = "N/E",
+    shape = "Habitat"
+  ) +
+  theme_minimal()
+
+ggplot(Data_Globale_Tahiti, aes(x = `HSA(%)`, y = `N/E`, shape = Hab)) +
+  geom_point(size = 1.8) +
+  scale_x_reverse() +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "black") +
+  labs(
+    x = "HSA (%)",
+    y = "N/E",
+    shape = "Habitat"
+  ) +
+  theme_minimal()
+
+summary(lmer(`N/E` ~ `Alt(m)` + (1|Commune), data = Data_Globale_Tahiti))
+summary(lmer(`N/E` ~ `HSA(%)` + (1|Commune), data = Data_Globale_Tahiti))
+```
+
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = `Alt(m)`, y = `S`, color = Hab)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  labs(
+    x = "Altitude (m)",
+    y = "S",
+    color = "Habitat",
+  ) +
+  theme_minimal()
+
+ggplot(Data_Globale_Tahiti, aes(x = `HSA(%)`, y = `S`, color = Hab)) +
+  geom_point(size = 3) +
+  scale_x_reverse() +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  labs(
+    x = "HSA(%)",
+    y = "S",
+    color = "Habitat",
+  ) +
+  theme_minimal()
+
+summary(lmer(`S` ~ `Alt(m)` + (1|Commune), data = Data_Globale_Tahiti))
+summary(lmer(`S` ~ `HSA(%)` + (1|Commune), data = Data_Globale_Tahiti))
+```
+```{r}
+# Forcer l'ordre des habitats
+Data_Globale_Tahiti$Hab <- factor(
+  Data_Globale_Tahiti$Hab,
+  levels = c("Urbain", "Suburbain", "Prairie", "Forêt")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = Hab, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Habitat",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E par type d'habitat (sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+library(emmeans)
+mod_hab <-lmer(`N/E` ~ `Hab` + (1|Commune), data = Data_Globale_Tahiti)
+summary(mod_hab)
+car::Anova(mod_hab)
+emmeans(mod_hab, pairwise ~ Hab)
+emmeans(mod_hab, pairwise ~ Hab, adjust = "tukey")
+
+
+```
+
+```{r}
+library(dplyr)
+
+# Créer une nouvelle variable regroupant les habitats
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    Habitat_Group = case_when(
+      Habitat %in% c("Urbain", "Suburbain") ~ "Urbain",
+      Habitat %in% c("Forêt", "Prairie") ~ "Nature",
+      TRUE ~ Habitat  # pour les autres éventuels
+    )
+  )
+
+# Forcer l'ordre des groupes
+Data_Globale_Tahiti$Habitat_Group <- factor(
+  Data_Globale_Tahiti$Habitat_Group,
+  levels = c("Urbain", "Nature")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = Habitat_Group, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Type d'habitat regroupé",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E par habitat (Urbain vs Nature, sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+summary(lm(`N/E` ~ `Habitat_Group`, data = Data_Globale_Tahiti))
+```
+```{r}
+
+
+# Créer une variable pour 4 catégories de HSA
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    HSA_Group = case_when(
+      `HSA(%)` <= 0.10 ~ "≤ 10%",
+      `HSA(%)` > 0.10 & `HSA(%)` <= 0.25 ~ "10–25%",
+      `HSA(%)` > 0.25 & `HSA(%)` <= 0.50 ~ "25–50%",
+      `HSA(%)` > 0.50 ~ "> 50%"
+    )
+  )
+
+# Forcer l'ordre des catégories
+Data_Globale_Tahiti$HSA_Group <- factor(
+  Data_Globale_Tahiti$HSA_Group,
+  levels = c("≤ 10%", "10–25%", "25–50%", "> 50%")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = HSA_Group, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Catégorie HSA (%)",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E selon HSA (sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+
+summary(lm(`N/E` ~ `HSA_Group`, data = Data_Globale_Tahiti))
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+
+Data_Global_Long <- pivot_longer(Data_Globale_Tahiti,
+                          cols = c(`Arb(%)`, `Arbu(%)`, `Her(%)`),
+                          names_to = "Vegetation",
+                          values_to = "Pourcentage")
+
+ggplot(Data_Global_Long, aes(x = Hab, y = Pourcentage, fill = Vegetation)) +
+  geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.15),
+              size = 1, alpha = 0.5, color = "grey20") +
+  scale_fill_grey(start = 0.3, end = 0.8) +
+  theme_minimal()
+```
+

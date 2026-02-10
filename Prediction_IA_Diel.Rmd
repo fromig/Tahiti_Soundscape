@@ -1,0 +1,253 @@
+# Evaluating hypotheses regarding the shape of activity curves {#unibim}
+
+Diel activity patterns are often described or classified as either:
+
+* **unimodal**: the species is mostly active during a restricted portion of the 24-hour cycle, and not (or almost not) active in the remaining time. The activity  curve is characterized by only one peak, and it is typical of species that are either diurnal or nocturnal.
+* **bimodal**: the species is mostly active during two specific times of the 24-hour cycle, often corresponding to sunrise and sunset (i.e. crepuscular species) and inactive (or mostly inactive) during the rest of the time. The activity curve is characterized by having two peaks.
+* **cathemeral (non-modal)**: the species is equally active throughout the 24-hour cycle and the activity curve approximates a flat line.
+
+Here, we build and compare trigonometric hierarchical models representing these three different diel activity patterns. To reiterate, we use independent camera-trap records of coyotes (*Canis latrans*) collected between 2016 and 2018 at 100 locations in Northern Minnesota, USA, [@Iannarilliea2021], with the data organized as described in the previous Tutorial \@ref(dataprep). 
+
+```{r}
+library(readxl)
+setwd("~/Césure/Tahiti")
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+
+```
+
+``` {r univsbim1, message = FALSE, warnings = FALSE}
+# Load libraries
+set.seed(129)
+library(dplyr)
+library(lubridate)
+library(GLMMadaptive)
+library(lmtest)
+library(ggpubr)
+```
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_5m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_5m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_0.3_8Khz"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne
+```{r}
+IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::select(-ADI_val.left_band_values,
+         -ADI_val.left_bandrange_values) %>%
+  rename(Enr = projet)
+
+IA_5m <- IA_5m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  rename(Enr = projet)
+colnames(IA_10m_0.3_8Khz)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+
+DF_IA5 <- IA_5m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  select(-Fichier,
+         -EAA)
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  dplyr::select(-Fichier,
+         -EAA)
+```
+
+Nettoyer le nom dans DF_IA5
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA5$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques
+DF_IA5$date  <- as.Date(DF_IA5$datetime)
+DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
+DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
+DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
+```
+
+
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA10$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques
+DF_IA10$date  <- as.Date(DF_IA10$datetime)
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H"))
+DF_IA10<- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
+```
+
+We start by fitting a model that describes a *unimodal* activity pattern. This structure includes only the first of the two cosine terms in equation 1 (which translates in the first and second terms of equation 2), and a random intercept and a random slope as described in Tutorial \@ref(est).   
+
+``` {r univsbim2}
+# Unimodal 
+unimodal <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) +
+                        (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)|Enr) ,
+                        data = DF_IA10
+                        )
+summary(unimodal)
+```
+
+To code for a *bimodal* activity pattern, we extend the model structure above by also including the second cosine term in equation 1 (i.e. third and forth terms in equation 2).
+
+``` {r univsbim3, cache=TRUE, cache.path="cache/"}
+# Bimodal 
+bimodal <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)+ cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)|Enr),
+                       data = DF_IA10
+                       )
+summary(bimodal)
+```
+
+Finally, we use a model without any cosine term to describe a *cathemeral* activity patterns. We include a random intercept but cannot include a random slope due the structure of model itself. 
+
+``` {r univsbim4}
+null_mod <- lmer(ADI ~ 1 + (1|Enr),
+                      data = DF_IA10
+                        )
+summary(null_mod)
+```
+
+**Model selection.** We can now proceed to compare the different model structures and associated hypotheses. We can do this using the Akaike Information Criterion (AIC; @AIC).
+
+``` {r univsbim5}
+# AIC comparison
+AIC(null_mod, unimodal, bimodal)
+```
+
+We can also compare the models using a Likelihood Ratio Test (LRT).
+
+``` {r univsbim6}
+lrtest(null_mod, unimodal, bimodal)
+```
+
+Both comparisons suggest that the bimodal pattern is the most supported model among those compared. We can, thus, conclude that coyotes have a bimodal activity pattern.
+
+We can also visually compare predicted activity curves based on these models. As in other examples, we first use the function `GLMMadaptive::effectPlotData` to predict the activity curves throughout the 24-hour cycle and then use `ggplot` to plot the results.
+
+```{r}
+newdat <- expand.grid(
+  heure_num = seq(min(DF_IA10$heure_num),
+                  max(DF_IA10$heure_num),
+                  length.out = 100),
+  Enr = unique(DF_IA10$Enr)
+)
+```
+
+
+```{r}
+library(merTools)
+
+pred_fun <- function(mod, newdat, name){
+
+  p <- predictInterval(
+    mod,
+    newdata = newdat,
+    level = 0.95,
+    n.sims = 1000,
+    include.resid.var = FALSE
+  )
+
+  data.frame(
+    heure_num = newdat$heure_num,
+    Enr = newdat$Enr,
+    pred = p$fit,
+    low = p$lwr,
+    upp = p$upr,
+    Model = name
+  )
+}
+```
+
+``` {r univsbim7}
+predict_unimodal   <- pred_fun(unimodal, newdat, "Unimodal")
+predict_bimodal    <- pred_fun(bimodal, newdat, "Bimodal")
+predict_cathemeral <- pred_fun(null_mod, newdat, "Cathemeral")
+```
+
+
+``` {r univsbim7b, class.source = "fold-hide", fig.cap="Predicted probability of activity by three hypotheses: unimodal, bimodal, and cathemeral; shading represented 95% confidence intervals."}
+plot_df <- rbind(
+  predict_unimodal,
+  predict_bimodal,
+  predict_cathemeral
+) %>%
+  group_by(Model, heure_num) %>%
+  summarise(
+    pred = mean(pred),
+    low = mean(low),
+    upp = mean(upp),
+    .groups = "drop"
+  )
+plot_df
+pl_shapes <- ggplot(
+  plot_df,
+  aes(x = heure_num, y = pred, fill = Model)
+) +
+  geom_line(aes(colour = Model)) +
+  geom_ribbon(aes(ymin = low, ymax = upp), alpha = 0.3)
+pl_shapes
+```
+
+We can test other hypotheses related to the shape of the activity curve (e.g., three or more peaks) for our target species by simply adding additional cosine terms to the model structure and then comparing the different structures using AIC or LRT. However, going beyond two peaks might be computationally challenging, especially when a random slope is included. In these cases, one might need to consider reducing model complexity by only including a random intercept.

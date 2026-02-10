@@ -1,0 +1,562 @@
+---
+title: "Acoustic_Exotic"
+output: html_document
+date: "2026-01-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+
+```
+
+
+
+Création du dataset principale pour rassembler les sites.
+```{r}
+base_dir <- "D:/Acoustique_Exotique"
+subdirs <- list.dirs(base_dir, recursive = TRUE)
+
+#Initialisation Dataframe
+df_all <- data.frame(
+  fichier = character(),
+  chemin  = character(),
+  projet  = character(),
+  mtime   = as.POSIXct(character()),
+  heure   = character(),
+  stringsAsFactors = FALSE
+)
+
+
+# Boucle pour traiter chaque dossier
+for (d in subdirs) {
+  
+  # Lister les fichiers WAV
+  wav_files <- list.files(d, pattern = "\\.[Ww][Aa][Vv]$", full.names = TRUE)
+  if (length(wav_files) == 0) next  # passer s'il n'y a pas de fichiers
+  # Infos fichiers
+  file_info <- file.info(wav_files)
+  
+  # Nom du projet : parent du dossier "Data"
+  parent_folder <- basename(dirname(d))          # dossier au-dessus de "Data"
+  projet <- strsplit(parent_folder, " ")[[1]][1] # garde juste "ILM_2" ou "Ifremer_1"
+  
+  df <- data.frame(
+    fichier = basename(wav_files),
+    chemin  = wav_files,
+    projet  = projet,
+    mtime   = file_info$mtime,
+    stringsAsFactors = FALSE
+  )
+  # Nettoyage TEMPORAIRE du nom (sans modifier df$fichier)
+  f_clean <- sub("_[0-9]{3}$", "", df$fichier)
+  
+  # Extraire date et heure depuis le nom
+  df$mtime <- as.POSIXct(
+    paste(
+      substr(f_clean, 10, 17),  # YYYYMMDD
+      substr(f_clean, 19, 24)   # HHMMSS
+      ),
+    format = "%Y%m%d %H%M%S",
+    tz = "UTC"
+    )
+  # Extraire HH:MM pour le filtre
+  df$heure <- format(df$mtime, "%H:%M")
+  
+  # Filtrer fichiers jour : 05:00 → 19:00
+  df_day <- df[df$heure >= "05:00" & df$heure < "19:00", ]
+  # Ajouter au data.frame global
+  df_all <- rbind(df_all, df_day)
+}
+
+# Trier par projet puis mtime
+df_all <- df_all[order(df_all$projet, df_all$mtime), ]
+
+# ===============================
+# Résultat final
+# ===============================
+df_all
+```
+Sans supprimer la nuit
+```{r}
+base_dir <- "D:/Acoustique_Exotique"
+subdirs <- list.dirs(base_dir, recursive = TRUE)
+
+#Initialisation Dataframe
+df_all <- data.frame(
+  fichier = character(),
+  chemin  = character(),
+  projet  = character(),
+  mtime   = as.POSIXct(character()),
+  heure   = character(),
+  stringsAsFactors = FALSE
+)
+
+# Boucle pour traiter chaque dossier
+for (d in subdirs) {
+  
+  # Lister les fichiers WAV
+  wav_files <- list.files(d, pattern = "\\.[Ww][Aa][Vv]$", full.names = TRUE)
+  if (length(wav_files) == 0) next  # passer s'il n'y a pas de fichiers
+  # Infos fichiers
+  file_info <- file.info(wav_files)
+  
+  # Nom du projet : parent du dossier "Data"
+  parent_folder <- basename(dirname(d))          # dossier au-dessus de "Data"
+  projet <- strsplit(parent_folder, " ")[[1]][1] # garde juste "ILM_2" ou "Ifremer_1"
+  
+  df <- data.frame(
+    fichier = basename(wav_files),
+    chemin  = wav_files,
+    projet  = projet,
+    mtime   = file_info$mtime,
+    stringsAsFactors = FALSE
+  )
+  # Extraire HH:MM (conservé pour info, sans filtrage)
+  df$heure <- format(df$mtime, "%H:%M")
+  # Ajouter tous les fichiers (jour + nuit)
+  df_all <- rbind(df_all, df)
+
+}
+
+# Trier par projet puis mtime
+df_all <- df_all[order(df_all$projet, df_all$mtime), ]
+
+# ===============================
+# Résultat final
+# ===============================
+df_all
+```
+
+
+Import des dataset des sites pour calcul des indices
+```{r}
+#Files de 1 heure
+df_Ifr <- df_all[df_all$projet == "Ifremer_1", ]
+df_Ilm1 <- df_all[df_all$projet == "ILM_1", ]
+df_Ilm2 <- df_all[df_all$projet == "ILM_2", ]
+df_Ilm3 <- df_all[df_all$projet == "ILM_3", ]
+df_Jar1 <- df_all[df_all$projet == "Jardin_Eau_1",]
+df_Jar2 <- df_all[df_all$projet == "Jardin_Eau_2",]
+df_Jar3 <- df_all[df_all$projet == "Jardin_Eau_3",]
+df_Jar4 <- df_all[df_all$projet == "Jardin_Eau_4",]
+df_Jar5 <- df_all[df_all$projet == "Jardin_Eau_5",]
+df_Mar1 <- df_all[df_all$projet == "Marae_1",]
+df_Mar2 <- df_all[df_all$projet == "Marae_2",]
+df_Mar3 <- df_all[df_all$projet == "Marae_3",]
+df_Mar4 <- df_all[df_all$projet == "Marae_4",]
+df_Obe1 <- df_all[df_all$projet == "OBelvedere_1",]
+df_Obe2 <- df_all[df_all$projet == "OBelvedere_2",]
+df_Obe3 <- df_all[df_all$projet == "OBelvedere_3",]
+df_Obe4 <- df_all[df_all$projet == "OBelvedere_4",]
+df_Obe5 <- df_all[df_all$projet == "OBelvedere_5",]
+df_Obe6 <- df_all[df_all$projet == "OBelvedere_6",]
+df_Obe7 <- df_all[df_all$projet == "OBelvedere_7",]
+df_Obe8 <- df_all[df_all$projet == "Obelvedere_8",]
+df_Pbe1 <- df_all[df_all$projet == "PI_Belvedere_1",]
+df_Pbe2 <- df_all[df_all$projet == "PI_Belvedere_2",]
+df_Pbe3 <- df_all[df_all$projet == "PI_Belvedere_3",]
+df_Pbe4 <- df_all[df_all$projet == "PI_Belvedere_4",]
+df_Pbe5 <- df_all[df_all$projet == "PI_Belvedere_5",]
+df_Pbe6 <- df_all[df_all$projet == "PI_Belvedere_6",]
+df_Pbe7 <- df_all[df_all$projet == "PI_Belvedere_7",]
+df_Pbe8 <- df_all[df_all$projet == "PI_Belvedere_8",]
+df_Pbe9 <- df_all[df_all$projet == "PI_Belvedere_9",]
+df_Pem1 <- df_all[df_all$projet == "PI_Embouchure_1",]
+df_Pem2 <- df_all[df_all$projet == "PI_Embouchure_2",]
+df_Pem3 <- df_all[df_all$projet == "PI_Embouchure_3",]
+df_Puu1 <- df_all[df_all$projet == "PI_Puunui_1",]
+df_Puu2 <- df_all[df_all$projet == "PI_Puunui_2",]
+df_Pun1 <- df_all[df_all$projet == "Punavai_1",]
+df_Pun2 <- df_all[df_all$projet == "Punavai_2",]
+df_Pun3 <- df_all[df_all$projet == "Punavai_3",]
+df_Pun4 <- df_all[df_all$projet == "Punavai_4",]
+df_Pun5 <- df_all[df_all$projet == "Punavai_5",]
+df_Pun6 <- df_all[df_all$projet == "Punavai_6",]
+
+
+#Files de 30 minutes
+df_Pap2 <- df_all[df_all$projet == "Papeete_2", ]
+df_Pap3 <- df_all[df_all$projet == "Papeete_3", ]
+df_Pap4 <- df_all[df_all$projet == "Papeete_4", ]
+df_Pap5 <- df_all[df_all$projet == "Papeete_5", ]
+df_Obe6.5 <- df_all[df_all$projet == "OBelvedere_6.5",]
+df_Obe7.5 <- df_all[df_all$projet == "OBelvedere_7.5",]
+df_Puna <- df_all[df_all$projet == "Punaauia_Tefautea",]
+df_Pem4 <- df_all[df_all$projet == "PI_Embouchure_4",]
+df_Ifr2 <- df_all[df_all$projet == "Ifremer_2", ]
+#File pour nuit + 10m
+df_Ifr_10 <- df_all[df_all$projet == "Ifremer_1", ]
+df_Jar_3_10 <- df_all[df_all$projet == "Jardin_Eau_3", ]
+df_Obe7_10 <- df_all[df_all$projet == "OBelvedere_7",]
+df_Pem3_10 <- df_all[df_all$projet == "PI_Embouchure_3",]
+df_Puu2_10 <- df_all[df_all$projet == "PI_Puunui_2",]
+df_Pbe2_10 <- df_all[df_all$projet == "PI_Belvedere_2",]
+df_Pun5_10 <- df_all[df_all$projet == "Punavai_5",]
+df_Mar1_10 <- df_all[df_all$projet == "Marae_1",]
+df_Ilm1_10 <- df_all[df_all$projet == "ILM_1", ]
+df_Obe1_10 <- df_all[df_all$projet == "OBelvedere_1",]
+df_Pbe3_10 <- df_all[df_all$projet == "PI_Belvedere_3",]
+df_Pem4_10 <- df_all[df_all$projet == "PI_Embouchure_4",]
+df_Ifr2_10 <- df_all[df_all$projet == "Ifremer_2", ]
+df_Mar2_10 <- df_all[df_all$projet == "Marae_2",]
+df_Mar3_10 <- df_all[df_all$projet == "Marae_3",]
+df_Mar4_10 <- df_all[df_all$projet == "Marae_4",]
+df_Obe1_10 <- df_all[df_all$projet == "OBelvedere_1",]
+df_Obe2_10 <- df_all[df_all$projet == "OBelvedere_2",]
+df_Obe3_10 <- df_all[df_all$projet == "OBelvedere_3",]
+df_Obe4_10 <- df_all[df_all$projet == "OBelvedere_4",]
+df_Obe5_10 <- df_all[df_all$projet == "OBelvedere_5",]
+
+```
+
+Selection des 5 minutes en filtrant les wave files entre 300 et 8000 hz
+```{r}
+extraire_5min_alea_mem <- function(wav_path, duree_sec = 300, fmin = 300, fmax = 8000) {
+
+  w <- tryCatch(
+    suppressWarnings(tuneR::readWave(wav_path)),
+    error = function(e) return(NULL)
+  )
+  if (is.null(w)) return(NULL)
+
+  fs <- w@samp.rate
+  n  <- length(w@left)
+  if (is.null(n) || n == 0) return(NULL)
+
+  total_sec <- n / fs
+
+  # on ne croit QUE ce que R lit réellement
+  if (total_sec < duree_sec) return(NULL)
+
+  n_extract <- duree_sec * fs
+  start_sample <- sample.int(n - n_extract + 1, 1)
+  end_sample   <- start_sample + n_extract - 1
+
+  w@left <- w@left[start_sample:end_sample]
+  if (w@stereo) {
+    w@right <- w@right[start_sample:end_sample]
+  }
+
+  # --- FILTRAGE PASSE-BANDE 300-8000 Hz ---
+  w_mat <- seewave::bwfilter(
+    w,
+    f = fs,
+    n = 2,
+    from = fmin,
+    to = fmax,
+    bandpass = TRUE
+  )
+
+  # Reconvertir en objet Wave
+  w@left  <- w_mat[,1]
+  if (w@stereo) {
+    w@right <- w_mat[,2]
+  }
+
+  return(w)
+}
+```
+Selection de 10minutes
+```{r}
+extraire_10min_alea_mem <- function(wav_path, duree_sec = 600, fmin = 300, fmax = 8000) {
+
+  w <- tryCatch(
+    suppressWarnings(tuneR::readWave(wav_path)),
+    error = function(e) return(NULL)
+  )
+  if (is.null(w)) return(NULL)
+
+  fs <- w@samp.rate
+  n  <- length(w@left)
+  if (is.null(n) || n == 0) return(NULL)
+
+  total_sec <- n / fs
+
+  # on ne croit QUE ce que R lit réellement
+  if (total_sec < duree_sec) return(NULL)
+
+  n_extract <- duree_sec * fs
+  start_sample <- sample.int(n - n_extract + 1, 1)
+  end_sample   <- start_sample + n_extract - 1
+
+  w@left <- w@left[start_sample:end_sample]
+  if (w@stereo) {
+    w@right <- w@right[start_sample:end_sample]
+  }
+
+  # --- FILTRAGE PASSE-BANDE 300-8000 Hz ---
+  w_mat <- seewave::bwfilter(
+    w,
+    f = fs,
+    n = 2,
+    from = fmin,
+    to = fmax,
+    bandpass = TRUE
+  )
+
+  # Reconvertir en objet Wave
+  w@left  <- w_mat[,1]
+  if (w@stereo) {
+    w@right <- w_mat[,2]
+  }
+
+  return(w)
+}
+```
+
+
+Calcul des indices acoustiques pour des fichiers d'1H (1 files, 5m ou 10m), changer les df_ et result_file_ pour chaque site. et le truc aleatoire
+```{r}
+set.seed(123)
+
+results_file_10_Obe_5 <- data.frame(
+  projet = character(),
+  fichier = character(),
+  ACI_val = numeric(),
+  ADI_val = numeric(),
+  AEI_val = numeric(),
+  BIO_val = numeric(),
+  H_val = numeric(),
+  M_val = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_len(nrow(df_Obe5_10))) {
+  
+  wav_path <- df_Obe5_10$chemin[i]
+  projet   <- df_Obe5_10$projet[i]
+  fichier  <- df_Obe5_10$fichier[i]
+  
+  #wav_5min <- extraire_5min_alea_mem(wav_path) à rechanger si 5m, pareil pour les trucs en dessous
+  wav_10min <- extraire_10min_alea_mem(wav_path)
+  
+  if (is.null(wav_10min)) {
+    cat("Ignoré :", fichier, "\n")
+    next
+  }
+  
+  fs <- wav_10min@samp.rate
+  ACI <- seewave::ACI(wav_10min, f = fs)
+  ADI <- soundecology::acoustic_diversity(wav_10min)
+  AEI <- soundecology::acoustic_evenness(wav_10min)
+  BIO <- soundecology::bioacoustic_index(wav_10min)
+  H <- seewave::H(wav_10min, f = fs)
+  M <- seewave::M(wav_10min, f = fs)
+  
+  
+  # Ajouter les résultats dans le dataframe
+  results_file_10_Obe_5 <- rbind(
+    results_file_10_Obe_5,
+    data.frame(
+      projet = projet,
+      fichier = fichier,
+      ACI_val = ACI,
+      ADI_val = ADI,
+      AEI_val = AEI,
+      BIO_val = BIO,
+      H_val = H, 
+      M_val = M
+    )
+  )
+  
+  rm(wav_10min)
+  gc(FALSE)
+  
+  cat("OK :", fichier, "\n")
+}
+
+```
+
+
+Calcul des indices acoustiques pour des fichiers 30m (1/2 files, 5m). changer les df_ et result_file_ pour chaque site.
+```{r}
+set.seed(123)
+
+results_file_10_Ifr_2 <- data.frame(
+  projet = character(),
+  fichier = character(),
+  ACI_val = numeric(),
+  ADI_val = numeric(),
+  AEI_val = numeric(),
+  BIO_val = numeric(),
+  H_val = numeric(),
+  M_val = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_len(nrow(df_Ifr2_10))) {
+
+  # ----- Sélection 1 fichier sur 2 sans biais -----
+  paire <- ceiling(i / 2)
+
+  analyser <- if (paire %% 2 == 1) {
+    i %% 2 == 1    # paire impaire → 1er fichier
+  } else {
+    i %% 2 == 0    # paire paire → 2e fichier
+  }
+
+  if (!analyser) {
+    cat("Ignoré (règle paire) :", df_Ifr2_10$fichier[i], "\n")
+    next
+  }
+
+  # ----- Infos fichier -----
+  wav_path <- df_Ifr2_10$chemin[i]
+  projet   <- df_Ifr2_10$projet[i]
+  fichier  <- df_Ifr2_10$fichier[i]
+
+  # ----- Extraction 5 minutes aléatoires -----
+  wav_10min <- extraire_10min_alea_mem(wav_path)
+
+  if (is.null(wav_10min)) {
+    cat("Ignoré (lecture impossible) :", fichier, "\n")
+    next
+  }
+
+  # ----- Calcul indices -----
+  fs <- wav_10min@samp.rate
+
+  ACI <- seewave::ACI(wav_10min, f = fs)
+  ADI <- soundecology::acoustic_diversity(wav_10min)
+  AEI <- soundecology::acoustic_evenness(wav_10min)
+  BIO <- soundecology::bioacoustic_index(wav_10min)
+  H   <- seewave::H(wav_10min, f = fs)
+  M   <- seewave::M(wav_10min, f = fs)
+
+  # ----- Stockage résultats -----
+  results_file_10_Ifr_2 <- rbind(
+    results_file_10_Ifr_2,
+    data.frame(
+      projet = projet,
+      fichier = fichier,
+      ACI_val = ACI,
+      ADI_val = ADI,
+      AEI_val = AEI,
+      BIO_val = BIO,
+      H_val = H,
+      M_val = M
+    )
+  )
+
+  rm(wav_10min)
+  gc(FALSE)
+
+  cat("OK :", fichier, "\n")
+}
+```
+
+Export des indices acoustique en fichiers excel par site
+```{r}   
+write_xlsx(results_file_Ilm1, "results_file_Ilm_1_5m.xlsx")
+write_xlsx(results_file_Ilm2, "results_file_Ilm_2_5m.xlsx")
+write_xlsx(results_file_Ilm3, "results_file_Ilm_3_5m.xlsx")
+write_xlsx(results_file_Ifr1, "results_file_Ifr_1_5m.xlsx")
+write_xlsx(results_file_Jar1, "results_file_Jar_1_5m.xlsx")
+write_xlsx(results_file_Jar2, "results_file_Jar_2_5m.xlsx")
+write_xlsx(results_file_Jar3, "results_file_Jar_3_5m.xlsx")
+write_xlsx(results_file_Jar4, "results_file_Jar_4_5m.xlsx")
+write_xlsx(results_file_Jar5, "results_file_Jar_5_5m.xlsx")
+write_xlsx(results_file_Mar1, "results_file_Mar_1_5m.xlsx")
+write_xlsx(results_file_Mar2, "results_file_Mar_2_5m.xlsx")
+write_xlsx(results_file_Mar3, "results_file_Mar_3_5m.xlsx")
+write_xlsx(results_file_Mar4, "results_file_Mar_4_5m.xlsx")
+write_xlsx(results_file_Obe1, "results_file_Obe_1_5m.xlsx")
+write_xlsx(results_file_Obe2, "results_file_Obe_2_5m.xlsx")
+write_xlsx(results_file_Obe3, "results_file_Obe_3_5m.xlsx")
+write_xlsx(results_file_Obe4, "results_file_Obe_4_5m.xlsx")
+write_xlsx(results_file_Obe5, "results_file_Obe_5_5m.xlsx")
+write_xlsx(results_file_Obe6, "results_file_Obe_6_5m.xlsx")
+write_xlsx(results_file_Obe7, "results_file_Obe_7_5m.xlsx")
+write_xlsx(results_file_Obe8, "results_file_Obe_8_5m.xlsx")
+write_xlsx(results_file_Obe9, "results_file_Obe_9_5m.xlsx")
+write_xlsx(results_file_Pbe1, "results_file_Pbe_1_5m.xlsx")
+write_xlsx(results_file_Pbe2, "results_file_Pbe_2_5m.xlsx")
+write_xlsx(results_file_Pbe3, "results_file_Pbe_3_5m.xlsx")
+write_xlsx(results_file_Pbe5, "results_file_Pbe_5_5m.xlsx")
+write_xlsx(results_file_Pbe6, "results_file_Pbe_6_5m.xlsx")
+write_xlsx(results_file_Pbe7, "results_file_Pbe_7_5m.xlsx")
+write_xlsx(results_file_Pbe8, "results_file_Pbe_8_5m.xlsx")
+write_xlsx(results_file_Pbe9, "results_file_Pbe_9_5m.xlsx")
+write_xlsx(results_file_Pem1, "results_file_Pem_1_5m.xlsx")
+write_xlsx(results_file_Pem2, "results_file_Pem_2_5m.xlsx")
+write_xlsx(results_file_Pem3, "results_file_Pem_3_5m.xlsx")
+write_xlsx(results_file_Puu1, "results_file_Puu_1_5m.xlsx")
+write_xlsx(results_file_Puu2, "results_file_Puu_2_5m.xlsx")
+write_xlsx(results_file_Pun3, "results_file_Pun_3_5m.xlsx")
+write_xlsx(results_file_Pun4, "results_file_Pun_4_5m.xlsx")
+write_xlsx(results_file_Pun5, "results_file_Pun_5_5m.xlsx")
+write_xlsx(results_file_Pun6, "results_file_Pun_6_5m.xlsx")
+write_xlsx(results_file_Pap2, "results_file_Pap_2_5m.xlsx")
+write_xlsx(results_file_Pap3, "results_file_Pap_3_5m.xlsx")
+write_xlsx(results_file_Pap4, "results_file_Pap_4_5m.xlsx")
+write_xlsx(results_file_Pap5, "results_file_Pap_5_5m.xlsx")
+write_xlsx(results_file_Obe6.5, "results_file_Obe_6.5_5m.xlsx")
+write_xlsx(results_file_Obe7.5, "results_file_Obe_7.5_5m.xlsx")
+write_xlsx(results_file_Puna, "results_file_Puna_5m.xlsx")
+write_xlsx(results_file_Pem_4, "results_file_Pem_4_5m.xlsx")
+write_xlsx(results_file_Ifr_2, "results_file_Ifr_2_5m.xlsx")
+
+write_xlsx(results_file_10_Ifr, "results_file_Ifr_1_10m.xlsx")
+write_xlsx(results_file_10_Jar_3, "results_file_Jar_3_10m.xlsx")
+write_xlsx(results_file_10_Obe_7, "results_file_Obe_7_10m.xlsx")
+write_xlsx(results_file_10_Pem_3, "results_file_Pem_3_10m.xlsx")
+write_xlsx(results_file_10_Puu_2, "results_file_Puu_2_10m.xlsx")
+write_xlsx(results_file_10_Pbe_2, "results_file_Pbe_2_10m.xlsx")
+write_xlsx(results_file_10_Pun_5, "results_file_Pun_5_10m.xlsx")
+write_xlsx(results_file_10_Mar_1, "results_file_Mar_1_10m.xlsx")
+write_xlsx(results_file_10_Ilm_1, "results_file_Ilm_1_10m.xlsx")
+write_xlsx(results_file_10_Obe_1, "results_file_Obe_1_10m.xlsx")
+write_xlsx(results_file_10_Pbe_3, "results_file_Pbe_3_10m.xlsx")
+write_xlsx(results_file_Pem_4_10, "results_file_Pem_4_10m.xlsx")
+write_xlsx(results_file_10_Ifr_2, "results_file_Ifr_2_10m.xlsx")
+write_xlsx(results_file_10_Mar_2, "results_file_Mar_2_10m.xlsx")
+write_xlsx(results_file_10_Mar_4, "results_file_Mar_4_10m.xlsx")
+write_xlsx(results_file_10_Mar_3, "results_file_Mar_3_10m.xlsx")
+write_xlsx(results_file_10_Obe_2, "results_file_Obe_2_10m.xlsx")
+write_xlsx(results_file_10_Obe_3, "results_file_Obe_3_10m.xlsx")
+write_xlsx(results_file_10_Obe_4, "results_file_Obe_4_10m.xlsx")
+write_xlsx(results_file_10_Obe_5, "results_file_Obe_5_10m.xlsx")
+```
+
+
+
+Et on regroupe les fichiers ensuite ensmeble, par site et savoir cb de fichier ont joué qf même
+
+
+
+
+

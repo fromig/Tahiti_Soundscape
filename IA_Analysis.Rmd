@@ -28,12 +28,14 @@ plot(pressure)
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 
+Chargement Dataset Principale + setwd
 ```{r}
 library(readxl)
 Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
 View(Data_Globale_Tahiti)
 setwd("~/Césure/Tahiti")
 ```
+Packages nécessaires pour les analyses 
 ```{r}
 library(tuneR)
 library(seewave)
@@ -48,12 +50,13 @@ library(corrplot)
 library(performance)
 library(see)
 library(lmerTest)
+library(tidyr)
 ```
 
 Traitement Indice acoustique
-Import sur un DF de tout les indices et audio en 5 et 10 minutes
+Import sur un DF différent de tout les indices et audio en 5 et 10 minutes
 ```{r}
-chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz" #vers mon dossier de stockage
 fichiers_xlsx <- list.files(
   chemin,
   pattern = "\\.xlsx$",
@@ -74,11 +77,11 @@ IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
 IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
 ```
 
-Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne
+Pour DF_IA_5 et DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
 ```{r}
 IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
-  dplyr::select(where(~ !all(is.na(.)))) %>%
-  dplyr::rename(Enr = projet)
+  dplyr::select(where(~ !all(is.na(.)))) %>% #On retire les colonnes vide avec dplyr
+  dplyr::rename(Enr = projet) #On evite doublon entre projet, fichier.
 
 
 IA_5m <- IA_5m_0.3_8Khz %>%
@@ -94,10 +97,8 @@ IA_5m <- IA_5m_0.3_8Khz %>%
   )
 
 IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
-  select(where(~ !all(is.na(.)))) %>%
-  select(-ADI_val.left_band_values,
-         -ADI_val.left_bandrange_values) %>%
-  rename(Enr = projet)
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
 
 IA_10m <- IA_10m_0.3_8Khz %>%
   group_by(Enr, fichier) %>%
@@ -110,13 +111,13 @@ IA_10m <- IA_10m_0.3_8Khz %>%
     M = first(M_val),
     .groups = "drop"
   )
-
+#On rajoute les variables principales pour chaque ligne  d'indice pour les fichiers analysés
 DF_IA5 <- IA_5m %>%
   left_join(
     Data_Globale_Tahiti,
     by = "Enr"
   ) %>%
-  select(-Fichier,
+  dplyr::select(-Fichier,
          -EAA)
 
 DF_IA10 <- IA_10m %>%
@@ -124,10 +125,10 @@ DF_IA10 <- IA_10m %>%
     Data_Globale_Tahiti,
     by = "Enr"
   ) %>%
-  select(-Fichier,
+  dplyr::select(-Fichier,
          -EAA)
 ```
-
+On créer les variables adéquate pour l'heure + minute, l'heure et la date
 ```{r}
 # Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
 f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
@@ -140,41 +141,161 @@ DF_IA5$datetime <- as.POSIXct(
   format = "%Y%m%d %H%M%S",
   tz = "Pacific/Tahiti"
 )
-# Colonnes pratiques
-DF_IA5$date  <- as.Date(DF_IA5$datetime)
-DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
-DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
+# Colonnes pratiques, vérifier que la tz, time zone match bien, sinon ca peut modifier nos dates, et avoir des 27/02/24 en 28/02, ce qui double l'heure pour un jour aussi.
+DF_IA5$date  <- as.Date(DF_IA5$datetime, tz = "Pacific/Tahiti")
+DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H", tz = "Pacific/Tahiti"))
 DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
 ```
-Centré_réduite les données pour modélisation
+
+Pareil pour DF_IA10
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA10$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques, vérifier que la tz, time zone match bien, sinon ca peut modifier nos dates.
+DF_IA10$date  <- as.Date(DF_IA10$datetime, tz = "Pacific/Tahiti")
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tahiti"))
+DF_IA10 <- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
+```
+
+Ajout data météo quotidienne, précipitation jour et Température max pour DF_IA5, plus seulement une valeur pour toute la durée pour un site
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+Data_Meteo <- read_excel("Data_temp_prec.xlsx") #Excel de Meteo France, en ayant supprimer les colonnes pas intéressantes et vide, .en, Une Valeur dans afaahiti pas disponible donc moyenne avec les valeur précédentes et suivantes à la main, plus simple (surligné en jaune dans le excel)
+
+DF_IA5$date <- as.Date(DF_IA5$date)
+Data_Meteo$date <- as.Date(Data_Meteo$date)
+Data_Meteo$rr <- as.numeric(Data_Meteo$rr)
+Data_Meteo$tx <- as.numeric(Data_Meteo$tx)
+
+DF_IA5 <- DF_IA5 %>%
+  mutate(id_row = row_number()) #On rajoute id pour être sur qu'on match bien le bon jour avec la bonne météo.
+# Split stations précip
+prec_long <- DF_IA5 %>%  #On se base sur les stations adéquate que j'ai indiqué dans le Data_Globale
+  select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo %>% select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+# Moyenne par ligne originale  #En gros si plusieurs stations adéquates on fait la moyenne, sinon on prend que la valeur de la stations unique, au bon jour.
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA5 %>%
+  select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo %>% select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA5 <- DF_IA5 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+On fait la même chose pour DF_IA 10
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+Data_Meteo10 <- read_excel("Data_temp_prec.xlsx")
+
+DF_IA10$date <- as.Date(DF_IA10$date)
+Data_Meteo10$date <- as.Date(Data_Meteo10$date)
+Data_Meteo10$rr <- as.numeric(Data_Meteo10$rr)
+Data_Meteo10$tx <- as.numeric(Data_Meteo10$tx)
+
+DF_IA10 <- DF_IA10 %>%
+  mutate(id_row = row_number())
+# Split stations précip
+prec_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+# Moyenne par ligne originale 
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA10 <- DF_IA10 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+Centré_réduire les données pour modélisation
 ```{r}
 DF_IA5_Scale <- DF_IA5 %>%
   mutate(
     across(
-      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`),
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `rr_meteo`, `tx_meteo`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`),
       scale
     )
   )
 DF_IA10_Scale <- DF_IA10 %>%
   mutate(
     across(
-      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
+      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `rr_meteo`, `tx_meteo`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
       scale
     )
   )
 ```
+
+Vérification du nombre d'Enr présente pour l'analyse et on compte les minutes (donc fichiers) par site. (influence juste les variabilités)
 ```{r}
 IA_5m %>%
   distinct(Enr, fichier) %>%   # évite les doublons
   count(Enr, name = "nb_fichiers") %>%
   mutate(nb_fichiers_x5 = nb_fichiers * 5)
+print(unique(DF_IA5$Enr))
 ```
 
-Modèle Complet pour ADI, avec plein de variable corrélé à traiter, ce qui est cool c'est qu'on sait que N/E, S et D_B(m) ne sont pas corrélé avec d'autre, on peut déja les garder. On ne respecte pas les conditions d'hétérogénéité et homoscédasticité btw.
+Modèle Complet pour ADI, avec plein de variable corrélé à traiter, ce qui est cool c'est qu'on sait que N/E, S et D_B(m) ne sont pas corrélé avec d'autre, on peut déja les garder. On ne respecte pas les conditions d'hétérogénéité et homoscédasticité btw. On test tout pour ra=egarder la diminution de variance et les variables sensible pour l'indice modélisé. On inclut un effet niché de l'Enr dans la Commune
 ```{r}
 mod_ADI <- lmer(
   ADI ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -186,7 +307,7 @@ plot(mod_ADI)
 ```{r}
 mod_ACI <- lmer(
   ACI ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -197,7 +318,7 @@ car::Anova(mod_ACI)
 ```{r}
 mod_AEI <- lmer(
   AEI ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -208,7 +329,7 @@ car::Anova(mod_AEI)
 ```{r}
 mod_BIO <- lmer(
   BIO ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -219,7 +340,7 @@ car::Anova(mod_BIO)
 ```{r}
 mod_H <- lmer(
   H ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo`+`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -230,7 +351,7 @@ car::Anova(mod_H)
 ```{r}
 mod_M <- lmer(
   M ~
-    `HSA(%)` + `N/E` +`Alt(m)` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo` +`Hab` +`Ori` +`Val` +`Azi(°)` +`D_R_P(m)` +`D_M(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +`Ant(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -238,7 +359,7 @@ summary(mod_M)
 car::Anova(mod_M)
 ```
 
-Modèle null générale avec l'effet aléatoire à prendre en compte
+Modèle null générale avec l'effet aléatoire à prendre en compte pour chaque indice, pour futur comparaison
 ```{r}
 mod_ADI_nul <- lmer(ADI ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
 summary(mod_ADI_nul)
@@ -254,7 +375,7 @@ mod_M_nul <- lmer(M ~ 1 + (1 | Commune/Enr), data = DF_IA5_Scale)
 summary(mod_M_nul)
 ```
 
-Graphique pour voir les effets aléatoire entre sites et Commune, à changer entre IA
+Graphique pour voir les effets aléatoire entre sites et Commune, à changer entre IA, pour l'illustration dans le Canva
 ```{r}
 ggplot(DF_IA5, aes(x = H, y = Enr)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6) +
@@ -272,7 +393,7 @@ ggplot(DF_IA5, aes(x = Commune, y = ADI)) +
   ) +
   theme_minimal()
 ```
-Matrice de corrélation du model complet des IA
+Matrice de corrélation du model complet des IA, ne peut pas changer entre IA?
 ```{r}
 # Récupérer la matrice de covariance
 cov_mat <- vcov(mod_ADI)
@@ -289,13 +410,12 @@ anova(mod_H,mod_H_nul)
 anova(mod_M,mod_M_nul)
 ```
 
-Amélioration du modèle en retirant petit à petite les variables pour voir ce qu'il reste, on retire petit à petit les varibales les plus corrélées et les plus logique avec le VIF.
-
-On a retiré d'abord les variable qualitatives car continue puis on regarde le VIF pour les autres variables, on s'arrete avec que des Low correations VIF<3.
+Amélioration du modèle en retirant petit à petit les variables pour voir ce qu'il reste, on retire petit à petit les varibales les plus corrélées et les plus logique avec le VIF.
+On a retiré d'abord les variables qualitatives (Hab, Ori, Val) car continue puis on regarde le VIF pour les autres variables, on s'arrete avec que des Low correations VIF<5. On test à la fin du script en remplacant les % de végétations avec Hab pour voir si des choses sortes significatives.
 ```{r}
 mod_ADI_am <- lmer(
   ADI ~
-    `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+    `HSA(%)` + `N/E` +`Alt(m)` +`rr_meteo` +`tx_meteo`+`D_B(m)` + `Arb(%)` +`Arbu(%)` +`Her(%)` + S +`Nb_Day_2024` +(1|Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -315,25 +435,11 @@ cov_mat <- vcov(mod_ADI_am)
 # Optionnel : convertir en corrélation pour mieux visualiser
 corrplot(cov2cor(as.matrix(vcov(mod_ADI_am))))
 ```
-ADI en essayant d'inclure la variation cyclique en trigonoétrie, fonctionne pas encore
-```{r}
-mod_ADI_bim <- lmer(
-  ADI ~
-    cos(2*pi*heure_num/14) + sin(2*pi*heure_num/14) + cos(2*pi*heure_num/7) + sin(2*pi*heure_num/7) + (0 + cos(2*pi*heure_num/14) + sin(2*pi*heure_num/14) + cos(2*pi*heure_num/7) + sin(2*pi*heure_num/7)|Enr)
-    (1 | Commune/Enr),
-  data = DF_IA5,
-  REML = FALSE
-)
 
-summary(mod_ADI_bim)
-car::Anova(mod_ADI_bim)
-check_collinearity(mod_ADI_bim)
-anova(mod_ADI_am, mod_ADI_uni, mod_ADI_bim)
-```
 ```{r}
 mod_ACI_am <- lmer(
   ACI ~
- `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+ `HSA(%)` +`N/E` +`rr_meteo` +`tx_meteo` +`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -344,10 +450,9 @@ check_collinearity(mod_ACI_am)
 ```
 
 ```{r}
-library(lme4)
 mod_AEI_am <- lmer(
   AEI ~
- `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+ `HSA(%)` +`N/E` +`rr_meteo` +`tx_meteo` +`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -360,7 +465,7 @@ check_collinearity(mod_AEI_am)
 ```{r}
 mod_BIO_am <- lmer(
   BIO ~
- `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+ `HSA(%)` +`N/E` +`rr_meteo` +`tx_meteo`+`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -372,7 +477,7 @@ check_collinearity(mod_BIO_am)
 ```{r}
 mod_H_am <- lmer(
   H ~
- `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+ `HSA(%)` +`N/E` +`rr_meteo` +`tx_meteo`+`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -384,7 +489,7 @@ check_collinearity(mod_H_am)
 ```{r}
 mod_M_am <- lmer(
   M ~
- `HSA(%)` +`N/E` +`P_J_Moy(mm)` +`T_Max_M(C°)` +`Azi(°)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
+ `HSA(%)` +`N/E` +`rr_meteo` +`tx_meteo` +`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)` +S +`Nb_Day_2024` +(1 | Commune/Enr),
   data = DF_IA5_Scale,
   REML = FALSE
 )
@@ -393,7 +498,13 @@ car::Anova(mod_M_am)
 anova(mod_M_am,mod_M_nul)
 check_collinearity(mod_M_am)
 ```
-Modèle sur la variable habitat avec LMER et GAM, en incluant le modèle cyclique aussi
+Modèle sur la variable habitat avec LMER et GAM, en incluant le modèle cyclique aussi. EN gros je veux voir si il y a des différences entre les gam cycique et un lmer sans trigonometrie pour l'instant. On prend une variable qualitative pour comparer et justifier l'utilisation d'un gam. On complexifie l'heure dans le Gam sur 3 niveau, et on regarde si il est important de prendre en compte l'heure pour la variabilité.
+
+C'est juste une façon d'essayer d'utiliser les gam, on fera du trigonométrie après aussi.
+
+On se base ici en partit sur les explications de Iaranelli? pour la création du gam.
+
+On fait tout simple pour commencer.
 ```{r}
 library(mgcv)
 mod_hab_bio <-lmer(ADI ~ `Hab` + (1|Commune/Enr), data = DF_IA5)
@@ -403,14 +514,11 @@ car::Anova(mod_hab_bio)
 DF_IA5$Enr <- as.factor(DF_IA5$Enr)
 DF_IA5$Commune <- as.factor(DF_IA5$Commune)
 DF_IA5$heure_num <- as.numeric(DF_IA5$heure_num)
+DF_IA10$Enr <- as.factor(DF_IA10$Enr)
+DF_IA10$Commune <- as.factor(DF_IA10$Commune)
+DF_IA10$heure_num <- as.numeric(DF_IA10$heure_num)
 
-DF_filtre <- DF_IA5 %>%
-  mutate(heure_num = as.numeric(heure_num)) %>%
-  group_by(Enr, date) %>%
-  filter(setequal(unique(heure_num), 4:17)) %>%
-  ungroup()
-DF_filtre %>%
-  count(date)
+
 DF_IA5 %>%
   group_by(date) %>%
   summarise(
@@ -425,46 +533,20 @@ g0 <- gam(ADI ~ Hab +
 summary(g0)
 anova.gam(g0)
 
-g1 <- gam(ADI ~ Hab +
-        s(heure_num, bs="cr") +
+g2 <- gam(
+ADI ~ 
+Hab +
+s(heure_num, bs = "cc", k = 7, by = Enr) + 
         s(Commune, bs="re") +
         s(Enr, bs="re"),
-    data = DF_IA5)
-summary(g1)
-anova.gam(g1)
-
-
-g2 <- gam(ADI ~ Hab +
-        s(heure_num, bs="cc", k=7) +
-        s(heure_num, bs = "cc", k=7, by = Enr) +
-        s(Commune, bs="re") +
-        s(Enr, bs="re"),
-        knots = list(heure_num = c(4,17)),
-    data = DF_IA5)
+knots = list(heure_num = c(4,17)),
+data = DF_IA5,
+)
 summary(g2)
 anova.gam(g2)
 
-g3 <- gam(ADI ~ Hab +
-        s(heure_num, bs="cc", k=7) +
-        s(heure_num, bs = "cc", k=7, by = Enr) +
-        s(Commune, bs="re") +
-        s(Enr, bs="re"),
-        knots = list(heure_num = c(4,17)),
-    data = DF_filtre)
-summary(g3)
-anova.gam(g3)
 ```
-```{r}
-summary(lmer(ADI ~ `N/E` + (1|Commune/Enr), data = DF_IA5))
-car::Anova(lmer(ASI ~ `N/E`+ (1|Commune/Enr), data = DF_IA5))
-```
-Test simplement Indice x Variable de richesse et N/E
-```{r}
-summary(lmer(BIO ~ `S` + (1|Commune/Enr), data = DF_IA5))
-car::Anova(lmer(BIO ~ `S` + (1|Commune/Enr), data = DF_IA5))
-```
-
-NUl POUR L'INSTANT, ptet pas la bonne technique
+Test sur l'autocorrelation des sites NUl POUR L'INSTANT, ptet pas la bonne technique, J'ai juste pris ca d'un texte de plubication pour essayer de faire la même, mais je me suis pas mis dedans.
 ```{r}
 # ---------------------------
 library(ape)
@@ -501,16 +583,19 @@ morans_result
 #Observed < Expected (négatif) → dispersion spatiale
 
 #+ Regarder la correlation des indices entre eux ducoup
-
 ```
+
+
+Ici on se base sur la publi de Hutschenreiter, Performance of Four Indice... Vraiment beaucoup basé dessus.
+En gros l'idée est de pas s'embéter avec les random effect ou d'autre variable mais juste de regarder les moyennes et les écart de nos indices, si on les résumes par site (grosse perte d'info et donc de précision des indices), pour voir si dans les indices il y a certaines choses qui se correl mieux avec la richesse (on pourra tester avec N/E si on trouve que c'est utile).
+Puis comme ça on fait aussi la pca de nos indices ppour regarder lesquels ont les mêmes infuence/tendances.
+A la fin j'essayer pour tester de prédire es valeurs de richesse à travers les indices les plus corrélé, pour voir si ca fonctionne déja, et regarder si on peut avoir une tendance à travers le modèle le mieux fitté à la richesse.
 
 ```{r}
 library(writexl)
-
 indices <- c("ACI","ADI","AEI","BIO","H","M")
-
 #Moyenne par Mean et SD
-full_day <- DF_IA5 %>%
+full_day <- DF_IA5 %>% #on pren chaque heure d'un site et on fait la moyenne, 
   group_by(Enr) %>%
   summarise(
     S = first(S),
@@ -525,19 +610,17 @@ table_predictors <- full_day %>%
                    list(mean = mean,
                         sd = sd),
                    na.rm=TRUE))
-
 print(table_predictors)
 
 full_day_z <- full_day %>%
   mutate(across(-c(Enr, S), scale))
 
-corr_matrix <- cor(full_day_z %>%
+corr_matrix <- cor(full_day_z %>% #Ptite corrélations pour voir les indices qui s'influence comme ça
                      select(-Enr, -S),
                    method="spearman",
                    use="complete.obs")
 
 corrplot(corr_matrix, method="color")
-
 predictors <- names(full_day_z)[!(names(full_day_z) %in% c("Enr","S"))]
 
 comb1 <- combn(predictors, 1, simplify=FALSE)
@@ -547,7 +630,7 @@ all_combos <- c(comb1, comb2)
 
 results_discrete <- data.frame()
 
-for(i in seq_along(all_combos)){
+for(i in seq_along(all_combos)){ #le principe c'est de faire es glm classique en prenant au max deux indices en variables explicative, puis on compare les valeurs d'AIC entre toutes les combianaisons qu'on aura créé (12 indices au total (mean et SD))
   
   vars <- all_combos[[i]]
   
@@ -568,29 +651,27 @@ for(i in seq_along(all_combos)){
                               ))
   }
 }
-
 results_discrete <- results_discrete %>% arrange(AIC)
 print(results_discrete)
 best_discrete <- results_discrete$model_obj[[1]]
-
-summary(best_discrete)
+summary(best_discrete) #On fait un summary sur le meilleur des glm pour voir si on sort un truc quand même
 ```
 
-
+On fait la PCA, et on regardera simplement la variance expliqué, la répartition des points et des indices.
 ```{r}
-pca_data <- full_day_z %>%
-  select(-Enr, -S)
-pca_res <- prcomp(pca_data, scale.=FALSE)
-summary(pca_res)
-
-full_day_z$PC1 <- pca_res$x[,1]
-full_day_z$PC2 <- pca_res$x[,2]
-
-pooled_models <- list(
-  glm(S ~ PC1, data=full_day_z),
-  glm(S ~ PC2, data=full_day_z),
-  glm(S ~ PC1 + PC2, data=full_day_z)
-)
+  pca_data <- full_day_z %>%
+    select(-Enr, -S)
+  pca_res <- prcomp(pca_data, scale.=FALSE)
+  summary(pca_res)
+  
+  full_day_z$PC1 <- pca_res$x[,1]
+  full_day_z$PC2 <- pca_res$x[,2]
+  
+  pooled_models <- list( #On fait des glm avec les différents PCA importantes (que 1 et 2), pourra regarder plus loin au besoin
+    glm(S ~ PC1, data=full_day_z),
+    glm(S ~ PC2, data=full_day_z),
+    glm(S ~ PC1 + PC2, data=full_day_z)
+  )
 
 results_pooled <- data.frame()
 
@@ -611,10 +692,32 @@ results_pooled <- results_pooled %>% arrange(AIC)
 print(results_pooled)
 
 best_pooled <- results_pooled$model_obj[[1]]
-summary(best_pooled)
+summary(best_pooled) #petit summary également
 ```
+Visualisation PCA sur Indices acoustique avec Facto
+```{r}
+var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2)
+full_day_z <- full_day_z %>%
+  left_join(
+    Data_Globale_Tahiti %>% select(Enr, Commune),
+    by = "Enr"
+  )
 
+plot(var_explained,
+     type="b",
+     xlab="Composante principale",
+     ylab="Variance expliquée",
+     main="Scree plot PCA")
 
+library(FactoMineR)
+
+res_acp <- PCA(pca_data, scale.unit = FALSE, graph = FALSE)
+
+library(factoextra)
+fviz_pca_ind(res_acp)             # individus
+fviz_pca_var(res_acp)             # variables
+```
+La on fait simplement des tableaux
 ```{r}
 table_best_models <- data.frame(
   Model_Type = c("Discrete","Pooled"),
@@ -629,7 +732,7 @@ table_best_models <- data.frame(
 print(table_best_models)
 ```
 
-
+Pareil, on fait un tableau ou on regarde pour les indices pures, sans correlations, (sd et mean simple), ce que ca peut sortir en coef avec la richesse et les SD, attention on est sur es données scale (full_day_z)
 ```{r}
 # 1️⃣ Filtrer seulement modèles à 1 prédicteur
 results_discrete_1var <- results_discrete %>%
@@ -666,6 +769,7 @@ coef_pooled <- data.frame(
   Upper = coef(best_pooled) + 1.96 * sqrt(diag(vcov(best_pooled)))
 )
 ```
+La pour exporter mais des trucs à chanager, pas fait car pas besoin
 ```{r}
 write_xlsx(list(
   Predictors_Table = table_predictors,
@@ -674,43 +778,10 @@ write_xlsx(list(
   Best_Models = table_best_models,
   Coef_Discrete = coef_discrete_1var_df,
   Coef_Pooled = coef_pooled,
-  Coef_table = coef_table
-),
-"Ecoacoustic_results2.xlsx")
+),"Ecoacoustic_results4.xlsx")
 ```
-
-
+On fait le graph avec les valeurs prédites en IC95 qui sera représenté par la droite rouge, les vraies richesse des indices seront les points noirs.
 ```{r}
-check_model(best_model)
-formula(best_model)
-coef(best_model)
-
-plot(full_day_z$S,
-     predict(best_model),
-     pch = 16,
-     xlab = "Observed richness",
-     ylab = "Predicted richness")
-
-abline(0, 1, lwd = 2)
-
-text(min(full_day_z$S),
-     max(predict(best_model)),
-     labels = paste("R² =", round(performance::r2(best_model)$R2, 2)),
-     pos = 4)
-```
-
-
-```{r}
-ggplot(full_day_z, aes(x = AEI_mean , y = S)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = TRUE) +
-  labs(
-    x = "Scaled AEI mean",
-    y = "Bird species richness",
-    caption = "Shaded area = 95% CI; points = observed values; N = 50"
-  ) +
-  theme_classic()
-
 model_S_AEI <- lm(S ~ AEI_mean, data = full_day)
 
 DF_AEI_Pre <- full_day[, c("Enr", "S", "AEI_mean")]
@@ -722,7 +793,7 @@ AEI_numeric <- as.numeric(DF_AEI_Pre$AEI_mean)
 
 # 2. Créer le data frame pour prédictions lisses
 newdata <- data.frame(AEI_mean = seq(min(AEI_numeric),
-                                     max(AEI_numeric), length.out = 50))
+                                     max(AEI_numeric), length.out = 50)) #50 en point de prédictions pour respecter le nombre de site que l'on a nous (=51)
 
 # 3. Predict
 pred <- predict(model_S_AEI, newdata, se.fit = TRUE)
@@ -742,31 +813,12 @@ ggplot() +
            label = paste("R² =", r2_val), hjust = 0, vjust = 1, size = 5) +
   theme_classic()
 ```
-
-```{r}
-
-```
-
-
 ```{r}
 aei_model <- results_discrete$model_obj[[3]]
 coef(aei_model)
-
-plot(full_day_z$S,
-     predict(aei_model),
-     pch = 16,
-     xlab = "Observed richness",
-     ylab = "Predicted richness")
-
-abline(0, 1, lwd = 2)
-
-text(min(full_day_z$S),
-     max(predict(aei_model)),
-     labels = paste("R² =", round(performance::r2(aei_model)$R2, 2)),
-     pos = 4)
 summary(aei_model )
-
 ```
+Fais des valeurs Akaike pondéré, fin c'est la publication qui fait ca, je fais pareil mais pas encore vraiment compris l'intérêt, juste ca transfore nos différence en AIC pour dire que une valeur super élevé de Aikake il a plus e chance c'est le meilleur modèle. Pourtant dans notre cas ca créer une grosse différence alors que les valeurs d'AIC sont très similaires.. Faudra ptet mieux se fier aux p_value.
 ```{r}
 library(MuMIn)
 
@@ -793,10 +845,8 @@ coef_discrete_1var_df <- coef_discrete_1var_df %>%
 # 4️⃣ Afficher le tableau final
 print(coef_discrete_1var_df)
 ```
-
+On fait encore un joli tableau avec la pca et nos meilleurs modèles dde prédicteur
 ```{r}
-library(kableExtra)
-
 models_tbl <- table_best_models %>%
   transmute(
     Section = "Highest ranking models",
@@ -817,26 +867,6 @@ predictors_tbl <- coef_discrete_1var_df %>%
 
 final_table <- bind_rows(models_tbl, predictors_tbl)
 print(final_table)
-
-
-kable(
-  final_table %>% select(-Section),
-  escape = FALSE,
-  col.names = c("", "", "", ""),
-  align = c("l","c","c","c")
-) %>%
-  kable_styling(full_width = FALSE) %>%
-  pack_rows(
-    "Highest ranking models",
-    1,
-    nrow(models_tbl)
-  ) %>%
-  pack_rows(
-    "Predictor variables",
-    nrow(models_tbl) + 1,
-    nrow(final_table)
-  ) %>%
-  add_header_above(c("Full day (05:00–19:54)" = 5))
 ```
 
 

@@ -8,6 +8,7 @@ Diel activity patterns are often described or classified as either:
 
 Here, we build and compare trigonometric hierarchical models representing these three different diel activity patterns. To reiterate, we use independent camera-trap records of coyotes (*Canis latrans*) collected between 2016 and 2018 at 100 locations in Northern Minnesota, USA, [@Iannarilliea2021], with the data organized as described in the previous Tutorial \@ref(dataprep). 
 
+Chargement Dataset Principale + setwd
 ```{r}
 library(readxl)
 setwd("~/Césure/Tahiti")
@@ -15,7 +16,7 @@ Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
 View(Data_Globale_Tahiti)
 
 ```
-
+Packages nécessaires pour les analyses 
 ``` {r univsbim1, message = FALSE, warnings = FALSE}
 # Load libraries
 set.seed(129)
@@ -25,6 +26,8 @@ library(GLMMadaptive)
 library(lmtest)
 library(ggpubr)
 ```
+Traitement Indice acoustique
+Import sur un DF différent de tout les indices et audio en 5 et 10 minutes
 ```{r}
 chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
 fichiers_xlsx <- list.files(
@@ -46,8 +49,7 @@ fichiers_xlsx <- list.files(
 IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
 IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
 ```
-
-Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne
+Pour DF_IA_5 et DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
 ```{r}
 IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
   dplyr::select(where(~ !all(is.na(.)))) %>%
@@ -99,7 +101,7 @@ DF_IA10 <- IA_10m %>%
          -EAA)
 ```
 
-Nettoyer le nom dans DF_IA5
+Nettoyer le nom dans DF_IA5, et On créer les variables adéquate pour l'heure + minute, l'heure et la date
 ```{r}
 # Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
 f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
@@ -113,13 +115,13 @@ DF_IA5$datetime <- as.POSIXct(
   tz = "Pacific/Tahiti"
 )
 # Colonnes pratiques
-DF_IA5$date  <- as.Date(DF_IA5$datetime)
-DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
-DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
+DF_IA5$date  <- as.Date(DF_IA5$datetime, tz = "Pacific/Tahiti")
+DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H", tz = "Pacific/Tahiti"))
 DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
 ```
 
-
+Pareil
 ```{r}
 # Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
 f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
@@ -133,17 +135,73 @@ DF_IA10$datetime <- as.POSIXct(
   tz = "Pacific/Tahiti"
 )
 # Colonnes pratiques
-DF_IA10$date  <- as.Date(DF_IA10$datetime)
-DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M")
-DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H"))
+DF_IA10$date  <- as.Date(DF_IA10$datetime, tz = "Pacific/Tahiti")
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tahiti"))
 DF_IA10<- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
 ```
+
+Ajout data météo quotidienne, précipitation jour et Température max, Faut rajouter pour DF_IA10 au besoin
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+Data_Meteo <- read_excel("Data_temp_prec.xlsx")
+
+DF_IA5$date <- as.Date(DF_IA5$date)
+Data_Meteo$date <- as.Date(Data_Meteo$date)
+Data_Meteo$rr <- as.numeric(Data_Meteo$rr)
+Data_Meteo$tx <- as.numeric(Data_Meteo$tx)
+
+DF_IA5 <- DF_IA5 %>%
+  mutate(id_row = row_number())
+
+# Split stations précip
+prec_long <- DF_IA5 %>%
+  select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo %>% select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+
+# Moyenne par ligne originale
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA5 %>%
+  select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo %>% select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA5 <- DF_IA5 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+
+Ici on utilise un script déja tout frais payé par  (Iannarilli et al., 2025), pour essayer les trigonométrics sur nos différentes indices et de modéliser la fluctuation journalière. Bon ici il n'y a pas un code par indice ou dataset il faut chagner à chaque fois, il y a trois modèles uni, bim, et cathemeral, on compare l'AIC ou LRT à chaque fois entre ces trois, puis on peut faire le graph de la prédiction
+Ici on prend en compte que l'Enr en effets aléatoire, j'ai teste ca change rien si on prend commune à la place, mais mettre les deux on mange beaucoup de variance quand même.
 
 We start by fitting a model that describes a *unimodal* activity pattern. This structure includes only the first of the two cosine terms in equation 1 (which translates in the first and second terms of equation 2), and a random intercept and a random slope as described in Tutorial \@ref(est).   
 
 ``` {r univsbim2}
 # Unimodal 
-unimodal <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) +
+unimodal <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) +
                         (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)|Enr) ,
                         data = DF_IA10
                         )
@@ -154,7 +212,7 @@ To code for a *bimodal* activity pattern, we extend the model structure above by
 
 ``` {r univsbim3, cache=TRUE, cache.path="cache/"}
 # Bimodal 
-bimodal <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)+ cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)|Enr),
+bimodal <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)+ cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)|Enr),
                        data = DF_IA10
                        )
 summary(bimodal)
@@ -163,7 +221,7 @@ summary(bimodal)
 Finally, we use a model without any cosine term to describe a *cathemeral* activity patterns. We include a random intercept but cannot include a random slope due the structure of model itself. 
 
 ``` {r univsbim4}
-null_mod <- lmer(ADI ~ 1 + (1|Enr),
+null_mod <- lmer(M ~ 1 + (1|Enr),
                       data = DF_IA10
                         )
 summary(null_mod)
@@ -172,6 +230,8 @@ summary(null_mod)
 **Model selection.** We can now proceed to compare the different model structures and associated hypotheses. We can do this using the Akaike Information Criterion (AIC; @AIC).
 
 ``` {r univsbim5}
+car::Anova(mod_ADI_uni)
+car::Anova(mod_ADI_bim)
 # AIC comparison
 AIC(null_mod, unimodal, bimodal)
 ```

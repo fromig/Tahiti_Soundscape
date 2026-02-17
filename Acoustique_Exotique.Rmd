@@ -45,7 +45,7 @@ library(writexl)
 
 
 
-Création du dataset principale pour rassembler les sites.
+Création du dataset principale pour rassembler les sites., Attention, ici on sélectionne déja les heures ddy jour, il faut prendre le deuxième code pour faire que la nuit!!!
 ```{r}
 base_dir <- "D:/Acoustique_Exotique"
 subdirs <- list.dirs(base_dir, recursive = TRUE)
@@ -110,7 +110,7 @@ df_all <- df_all[order(df_all$projet, df_all$mtime), ]
 # ===============================
 df_all
 ```
-Sans supprimer la nuit
+Code pour sans supprimer la nuit
 ```{r}
 base_dir <- "D:/Acoustique_Exotique"
 subdirs <- list.dirs(base_dir, recursive = TRUE)
@@ -162,7 +162,7 @@ df_all
 ```
 
 
-Import des dataset des sites pour calcul des indices
+Import des dataset des sites pour calcul des indices, Les lignes d'importation de df ou les # sont encore devant sont celles ou le site n'a pas encore était analysé.
 ```{r}
 #Files de 1 heure
 df_Ifr <- df_all[df_all$projet == "Ifremer_1", ]
@@ -218,20 +218,19 @@ df_Obe7.5 <- df_all[df_all$projet == "OBelvedere_7.5",]
 df_Puna <- df_all[df_all$projet == "Punaauia_Tefautea",]
 df_Pem4 <- df_all[df_all$projet == "PI_Embouchure_4",]
 df_Ifr2 <- df_all[df_all$projet == "Ifremer_2", ]
-#File pour nuit + 10m
+
+#A comparer avec 5m pour regarder les fichiers qui manquent dans les 1h et 30m
+#File pour nuit + 10m pour fichier de 1h
 df_Ifr_10 <- df_all[df_all$projet == "Ifremer_1", ]
-df_Jar_3_10 <- df_all[df_all$projet == "Jardin_Eau_3", ]
-df_Obe7_10 <- df_all[df_all$projet == "OBelvedere_7",]
-df_Pem3_10 <- df_all[df_all$projet == "PI_Embouchure_3",]
-df_Puu2_10 <- df_all[df_all$projet == "PI_Puunui_2",]
-df_Pbe2_10 <- df_all[df_all$projet == "PI_Belvedere_2",]
-df_Pun5_10 <- df_all[df_all$projet == "Punavai_5",]
-df_Mar1_10 <- df_all[df_all$projet == "Marae_1",]
 df_Ilm1_10 <- df_all[df_all$projet == "ILM_1", ]
-df_Obe1_10 <- df_all[df_all$projet == "OBelvedere_1",]
-df_Pbe3_10 <- df_all[df_all$projet == "PI_Belvedere_3",]
-df_Pem4_10 <- df_all[df_all$projet == "PI_Embouchure_4",]
-df_Ifr2_10 <- df_all[df_all$projet == "Ifremer_2", ]
+df_Ilm2_10 <- df_all[df_all$projet == "ILM_2", ]
+df_Ilm3_10 <- df_all[df_all$projet == "ILM_3", ]
+#df_Jar1_10 <- df_all[df_all$projet == "Jardin_Eau_1",]
+#df_Jar2_10 <- df_all[df_all$projet == "Jardin_Eau_2",]
+df_Jar_3_10 <- df_all[df_all$projet == "Jardin_Eau_3", ]
+#df_Jar4_10 <- df_all[df_all$projet == "Jardin_Eau_4",]
+#df_Jar5_10 <- df_all[df_all$projet == "Jardin_Eau_5",]
+df_Mar1_10 <- df_all[df_all$projet == "Marae_1",]
 df_Mar2_10 <- df_all[df_all$projet == "Marae_2",]
 df_Mar3_10 <- df_all[df_all$projet == "Marae_3",]
 df_Mar4_10 <- df_all[df_all$projet == "Marae_4",]
@@ -240,6 +239,41 @@ df_Obe2_10 <- df_all[df_all$projet == "OBelvedere_2",]
 df_Obe3_10 <- df_all[df_all$projet == "OBelvedere_3",]
 df_Obe4_10 <- df_all[df_all$projet == "OBelvedere_4",]
 df_Obe5_10 <- df_all[df_all$projet == "OBelvedere_5",]
+df_Obe6_10 <- df_all[df_all$projet == "OBelvedere_6",]
+df_Obe7_10 <- df_all[df_all$projet == "OBelvedere_7",]
+df_Obe8_10 <- df_all[df_all$projet == "Obelvedere_8",]
+df_Pbe1_10 <- df_all[df_all$projet == "PI_Belvedere_1",]
+df_Pbe2_10 <- df_all[df_all$projet == "PI_Belvedere_2",]
+df_Pbe3_10 <- df_all[df_all$projet == "PI_Belvedere_3",]
+df_Pbe4_10 <- df_all[df_all$projet == "PI_Belvedere_4",]
+df_Pbe5_10 <- df_all[df_all$projet == "PI_Belvedere_5",]
+df_Pbe6_10 <- df_all[df_all$projet == "PI_Belvedere_6",]
+df_Pbe7_10 <- df_all[df_all$projet == "PI_Belvedere_7",]
+df_Pbe8_10 <- df_all[df_all$projet == "PI_Belvedere_8",]
+df_Pbe9_10 <- df_all[df_all$projet == "PI_Belvedere_9",]
+#df_Pem1_10 <- df_all[df_all$projet == "PI_Embouchure_1",]
+#df_Pem2_10 <- df_all[df_all$projet == "PI_Embouchure_2",]
+df_Pem3_10 <- df_all[df_all$projet == "PI_Embouchure_3",]
+#df_Puu1_10 <- df_all[df_all$projet == "PI_Puunui_1",]
+df_Puu2_10 <- df_all[df_all$projet == "PI_Puunui_2",]
+#df_Pun1_10 <- df_all[df_all$projet == "Punavai_1",]
+#df_Pun2_10 <- df_all[df_all$projet == "Punavai_2",]
+#df_Pun3_10 <- df_all[df_all$projet == "Punavai_3",]
+#df_Pun4_10 <- df_all[df_all$projet == "Punavai_4",]
+df_Pun5_10 <- df_all[df_all$projet == "Punavai_5",]
+#df_Pun6_10 <- df_all[df_all$projet == "Punavai_6",]
+
+#Files de 30 minutes
+
+#df_Pap2_10 <- df_all[df_all$projet == "Papeete_2", ]
+#df_Pap3_10 <- df_all[df_all$projet == "Papeete_3", ]
+#df_Pap4_10 <- df_all[df_all$projet == "Papeete_4", ]
+#df_Pap5_10 <- df_all[df_all$projet == "Papeete_5", ]
+#df_Obe6.5_10 <- df_all[df_all$projet == "OBelvedere_6.5",]
+#df_Obe7.5_10 <- df_all[df_all$projet == "OBelvedere_7.5",]
+#df_Puna_10 <- df_all[df_all$projet == "Punaauia_Tefautea",]
+df_Pem4_10 <- df_all[df_all$projet == "PI_Embouchure_4",]
+df_Ifr2_10 <- df_all[df_all$projet == "Ifremer_2", ]
 
 ```
 
@@ -343,7 +377,7 @@ Calcul des indices acoustiques pour des fichiers d'1H (1 files, 5m ou 10m), chan
 ```{r}
 set.seed(123)
 
-results_file_10_Obe_5 <- data.frame(
+results_file_10_Ilm_3 <- data.frame(
   projet = character(),
   fichier = character(),
   ACI_val = numeric(),
@@ -355,11 +389,11 @@ results_file_10_Obe_5 <- data.frame(
   stringsAsFactors = FALSE
 )
 
-for (i in seq_len(nrow(df_Obe5_10))) {
+for (i in seq_len(nrow(df_Ilm3_10))) {
   
-  wav_path <- df_Obe5_10$chemin[i]
-  projet   <- df_Obe5_10$projet[i]
-  fichier  <- df_Obe5_10$fichier[i]
+  wav_path <- df_Ilm3_10$chemin[i]
+  projet   <- df_Ilm3_10$projet[i]
+  fichier  <- df_Ilm3_10$fichier[i]
   
   #wav_5min <- extraire_5min_alea_mem(wav_path) à rechanger si 5m, pareil pour les trucs en dessous
   wav_10min <- extraire_10min_alea_mem(wav_path)
@@ -379,8 +413,8 @@ for (i in seq_len(nrow(df_Obe5_10))) {
   
   
   # Ajouter les résultats dans le dataframe
-  results_file_10_Obe_5 <- rbind(
-    results_file_10_Obe_5,
+  results_file_10_Ilm_3 <- rbind(
+    results_file_10_Ilm_3,
     data.frame(
       projet = projet,
       fichier = fichier,
@@ -506,6 +540,7 @@ write_xlsx(results_file_Obe9, "results_file_Obe_9_5m.xlsx")
 write_xlsx(results_file_Pbe1, "results_file_Pbe_1_5m.xlsx")
 write_xlsx(results_file_Pbe2, "results_file_Pbe_2_5m.xlsx")
 write_xlsx(results_file_Pbe3, "results_file_Pbe_3_5m.xlsx")
+write_xlsx(results_file_5_Pbe_4, "results_file_Pbe_4_5m.xlsx")
 write_xlsx(results_file_Pbe5, "results_file_Pbe_5_5m.xlsx")
 write_xlsx(results_file_Pbe6, "results_file_Pbe_6_5m.xlsx")
 write_xlsx(results_file_Pbe7, "results_file_Pbe_7_5m.xlsx")
@@ -550,6 +585,15 @@ write_xlsx(results_file_10_Obe_2, "results_file_Obe_2_10m.xlsx")
 write_xlsx(results_file_10_Obe_3, "results_file_Obe_3_10m.xlsx")
 write_xlsx(results_file_10_Obe_4, "results_file_Obe_4_10m.xlsx")
 write_xlsx(results_file_10_Obe_5, "results_file_Obe_5_10m.xlsx")
+write_xlsx(results_file_10_Obe_6, "results_file_Obe_6_10m.xlsx")
+write_xlsx(results_file_10_Obe_8, "results_file_Obe_8_10m.xlsx")
+write_xlsx(results_file_10_Pbe_1, "results_file_Pbe_1_10m.xlsx")
+write_xlsx(results_file_10_Pbe_4, "results_file_Pbe_4_10m.xlsx")
+write_xlsx(results_file_10_Pbe_5, "results_file_Pbe_5_10m.xlsx")
+write_xlsx(results_file_10_Pbe_6, "results_file_Pbe_6_10m.xlsx")
+write_xlsx(results_file_10_Pbe_7, "results_file_Pbe_7_10m.xlsx")
+write_xlsx(results_file_10_Pbe_8, "results_file_Pbe_8_10m.xlsx")
+write_xlsx(results_file_10_Pbe_9, "results_file_Pbe_9_10m.xlsx")
 ```
 
 

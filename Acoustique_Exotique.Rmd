@@ -225,7 +225,7 @@ df_Ifr_10 <- df_all[df_all$projet == "Ifremer_1", ]
 df_Ilm1_10 <- df_all[df_all$projet == "ILM_1", ]
 df_Ilm2_10 <- df_all[df_all$projet == "ILM_2", ]
 df_Ilm3_10 <- df_all[df_all$projet == "ILM_3", ]
-#df_Jar1_10 <- df_all[df_all$projet == "Jardin_Eau_1",]
+df_Jar1_10 <- df_all[df_all$projet == "Jardin_Eau_1",]
 #df_Jar2_10 <- df_all[df_all$projet == "Jardin_Eau_2",]
 df_Jar_3_10 <- df_all[df_all$projet == "Jardin_Eau_3", ]
 #df_Jar4_10 <- df_all[df_all$projet == "Jardin_Eau_4",]
@@ -377,7 +377,7 @@ Calcul des indices acoustiques pour des fichiers d'1H (1 files, 5m ou 10m), chan
 ```{r}
 set.seed(123)
 
-results_file_10_Ilm_3 <- data.frame(
+results_file_10_Jar_1 <- data.frame(
   projet = character(),
   fichier = character(),
   ACI_val = numeric(),
@@ -389,11 +389,11 @@ results_file_10_Ilm_3 <- data.frame(
   stringsAsFactors = FALSE
 )
 
-for (i in seq_len(nrow(df_Ilm3_10))) {
+for (i in seq_len(nrow(df_Jar1_10))) {
   
-  wav_path <- df_Ilm3_10$chemin[i]
-  projet   <- df_Ilm3_10$projet[i]
-  fichier  <- df_Ilm3_10$fichier[i]
+  wav_path <- df_Jar1_10$chemin[i]
+  projet   <- df_Jar1_10$projet[i]
+  fichier  <- df_Jar1_10$fichier[i]
   
   #wav_5min <- extraire_5min_alea_mem(wav_path) à rechanger si 5m, pareil pour les trucs en dessous
   wav_10min <- extraire_10min_alea_mem(wav_path)
@@ -413,8 +413,8 @@ for (i in seq_len(nrow(df_Ilm3_10))) {
   
   
   # Ajouter les résultats dans le dataframe
-  results_file_10_Ilm_3 <- rbind(
-    results_file_10_Ilm_3,
+  results_file_10_Jar_1 <- rbind(
+    results_file_10_Jar_1,
     data.frame(
       projet = projet,
       fichier = fichier,
@@ -565,35 +565,59 @@ write_xlsx(results_file_Puna, "results_file_Puna_5m.xlsx")
 write_xlsx(results_file_Pem_4, "results_file_Pem_4_5m.xlsx")
 write_xlsx(results_file_Ifr_2, "results_file_Ifr_2_5m.xlsx")
 
+
+#Data exporté pour les 10m+nights
+
 write_xlsx(results_file_10_Ifr, "results_file_Ifr_1_10m.xlsx")
-write_xlsx(results_file_10_Jar_3, "results_file_Jar_3_10m.xlsx")
-write_xlsx(results_file_10_Obe_7, "results_file_Obe_7_10m.xlsx")
-write_xlsx(results_file_10_Pem_3, "results_file_Pem_3_10m.xlsx")
-write_xlsx(results_file_10_Puu_2, "results_file_Puu_2_10m.xlsx")
-write_xlsx(results_file_10_Pbe_2, "results_file_Pbe_2_10m.xlsx")
-write_xlsx(results_file_10_Pun_5, "results_file_Pun_5_10m.xlsx")
-write_xlsx(results_file_10_Mar_1, "results_file_Mar_1_10m.xlsx")
 write_xlsx(results_file_10_Ilm_1, "results_file_Ilm_1_10m.xlsx")
-write_xlsx(results_file_10_Obe_1, "results_file_Obe_1_10m.xlsx")
-write_xlsx(results_file_10_Pbe_3, "results_file_Pbe_3_10m.xlsx")
-write_xlsx(results_file_Pem_4_10, "results_file_Pem_4_10m.xlsx")
-write_xlsx(results_file_10_Ifr_2, "results_file_Ifr_2_10m.xlsx")
+write_xlsx(results_file_10_Ilm_2, "results_file_Ilm_2_10m.xlsx")
+write_xlsx(results_file_10_Ilm_3, "results_file_Ilm_3_10m.xlsx")
+#write_xlsx(results_file_10_Jar_1, "results_file_Jar_1_10m.xlsx")
+#write_xlsx(results_file_10_Jar_2, "results_file_Jar_2_10m.xlsx")
+write_xlsx(results_file_10_Jar_3, "results_file_Jar_3_10m.xlsx")
+#write_xlsx(results_file_10_Jar_4, "results_file_Jar_4_10m.xlsx")
+#write_xlsx(results_file_10_Jar_5, "results_file_Jar_5_10m.xlsx")
+write_xlsx(results_file_10_Mar_1, "results_file_Mar_1_10m.xlsx")
 write_xlsx(results_file_10_Mar_2, "results_file_Mar_2_10m.xlsx")
 write_xlsx(results_file_10_Mar_4, "results_file_Mar_4_10m.xlsx")
 write_xlsx(results_file_10_Mar_3, "results_file_Mar_3_10m.xlsx")
+write_xlsx(results_file_10_Obe_1, "results_file_Obe_1_10m.xlsx")
 write_xlsx(results_file_10_Obe_2, "results_file_Obe_2_10m.xlsx")
 write_xlsx(results_file_10_Obe_3, "results_file_Obe_3_10m.xlsx")
 write_xlsx(results_file_10_Obe_4, "results_file_Obe_4_10m.xlsx")
 write_xlsx(results_file_10_Obe_5, "results_file_Obe_5_10m.xlsx")
 write_xlsx(results_file_10_Obe_6, "results_file_Obe_6_10m.xlsx")
+write_xlsx(results_file_10_Obe_7, "results_file_Obe_7_10m.xlsx")
 write_xlsx(results_file_10_Obe_8, "results_file_Obe_8_10m.xlsx")
 write_xlsx(results_file_10_Pbe_1, "results_file_Pbe_1_10m.xlsx")
+write_xlsx(results_file_10_Pbe_2, "results_file_Pbe_2_10m.xlsx")
+write_xlsx(results_file_10_Pbe_3, "results_file_Pbe_3_10m.xlsx")
 write_xlsx(results_file_10_Pbe_4, "results_file_Pbe_4_10m.xlsx")
 write_xlsx(results_file_10_Pbe_5, "results_file_Pbe_5_10m.xlsx")
 write_xlsx(results_file_10_Pbe_6, "results_file_Pbe_6_10m.xlsx")
 write_xlsx(results_file_10_Pbe_7, "results_file_Pbe_7_10m.xlsx")
 write_xlsx(results_file_10_Pbe_8, "results_file_Pbe_8_10m.xlsx")
 write_xlsx(results_file_10_Pbe_9, "results_file_Pbe_9_10m.xlsx")
+#write_xlsx(results_file_10_Pem_1, "results_file_Pem_1_10m.xlsx")
+#write_xlsx(results_file_10_Pem_2, "results_file_Pem_2_10m.xlsx")
+write_xlsx(results_file_10_Pem_3, "results_file_Pem_3_10m.xlsx")
+#write_xlsx(results_file_10_Puu_1, "results_file_Puu_1_10m.xlsx")
+write_xlsx(results_file_10_Puu_2, "results_file_Puu_2_10m.xlsx")
+#write_xlsx(results_file_10_Pun_1, "results_file_Pun_1_10m.xlsx")
+#write_xlsx(results_file_10_Pun_2, "results_file_Pun_2_10m.xlsx")
+#write_xlsx(results_file_10_Pun_3, "results_file_Pun_3_10m.xlsx")
+#write_xlsx(results_file_10_Pun_4, "results_file_Pun_4_10m.xlsx")
+write_xlsx(results_file_10_Pun_5, "results_file_Pun_5_10m.xlsx")
+#write_xlsx(results_file_10_Pun_6, "results_file_Pun_6_10m.xlsx")
+#write_xlsx(results_file_10_Pap_2, "results_file_Pap_2_10m.xlsx")
+#write_xlsx(results_file_10_Pap_3, "results_file_Pap_3_10m.xlsx")
+#write_xlsx(results_file_10_Pap_4, "results_file_Pap_4_10m.xlsx")
+#write_xlsx(results_file_10_Pap_5, "results_file_Pap_5_10m.xlsx")
+#write_xlsx(results_file_10_Obe_6.5, "results_file_Obe_6.5_10m.xlsx")
+#write_xlsx(results_file_10_Obe_7.5, "results_file_Obe_7.5_10m.xlsx")
+#write_xlsx(results_file_10_Puna, "results_file_Puna_10m.xlsx")
+write_xlsx(results_file_Pem_4_10, "results_file_Pem_4_10m.xlsx")
+write_xlsx(results_file_10_Ifr_2, "results_file_Ifr_2_10m.xlsx")
 ```
 
 

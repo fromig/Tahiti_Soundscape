@@ -1,0 +1,758 @@
+---
+title: "IA_Analysis_Ad"
+output: html_document
+date: "2026-02-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+Chargement Dataset Principale + setwd
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour analyses et exportation des tableaux
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(tibble)
+library(ggeffects)
+library(tidyverse)
+library(broom.mixed)
+```
+
+Centré_réduire les données pour modélisation, Dataset des sites (n=51), scale des variables nécessaires pour analyses
+```{r}
+Data_Global_sc <- Data_Globale_Tahiti %>%
+  mutate(
+    across(
+      c(`Alt`, `P_J_Moy`,`T_Max_M`, `D_B`,`HSA`,`Arb`, `Arbu`, `Her`),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+
+Les 4 prédicteursde communauté aviaire avec toutes les végétations, avec deux gaussian et deux binomial, un effet Commune car la variable réponse ne bouge pas sur Enr, et pas de prise en compte de la météo (une moyenne pour un site, peu précis, pas d'hypothèse d'influence possible.
+```{r}
+mod_S_Hab <- lmer(
+  S ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_SExo_Hab <- lmer(
+  S_Exo ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_PANatif_Hab <- glmer(
+  `P/A_Natif` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+mod_PAMyna_Hab <- glmer(
+  `P/A_Myna` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+#test de l'ancienne VA de proprotion natif/exotique
+mod_NE_Hab <- lmer(
+  `N/E` ~
+ `HSA(%)` +`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)`+(1 | Commune),
+  data = Data_Global_Scale,
+   REML = FALSE
+)
+
+summary(mod_S_Hab)
+car::Anova(mod_S_Hab)
+summary(mod_SExo_Hab)
+car::Anova(mod_SExo_Hab)
+summary(mod_PANatif_Hab)
+car::Anova(mod_PANatif_Hab)
+summary(mod_PAMyna_Hab)
+car::Anova(mod_PAMyna_Hab)
+summary(mod_NE_Hab)
+car::Anova(mod_NE_Hab)
+```
+Exportation des tableaux GLM et Anova, attention a exportée après l'analyse du modèle car même nom de variable entre les modèles tot, arb, arbu et her.
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  res <- tidy(mod, effects = "fixed")
+  
+  # vérifier si df existe
+  if(!"df" %in% colnames(res)){
+    res$df <- NA
+  }
+  
+  res %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      Stat_value = round(statistic, 3),  # z ou t
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           Stat_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_Modeles_Hab_Tot.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_Hab_Total.xlsx")
+```
+
+Nouveau modèle avec couverture arborée seulement
+```{r}
+mod_S_Hab <- lmer(
+  S ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc`+`Arb_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_SExo_Hab <- lmer(
+  S_Exo ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc`+`Arb_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_PANatif_Hab <- glmer(
+  `P/A_Natif` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc`+`Arb_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+mod_PAMyna_Hab <- glmer(
+  `P/A_Myna` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc`+`Arb_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+summary(mod_S_Hab)
+car::Anova(mod_S_Hab)
+summary(mod_SExo_Hab)
+car::Anova(mod_SExo_Hab)
+summary(mod_PANatif_Hab)
+car::Anova(mod_PANatif_Hab)
+summary(mod_PAMyna_Hab)
+car::Anova(mod_PAMyna_Hab)
+```
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  res <- tidy(mod, effects = "fixed")
+  
+  # vérifier si df existe
+  if(!"df" %in% colnames(res)){
+    res$df <- NA
+  }
+  
+  res %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      Stat_value = round(statistic, 3),  # z ou t
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           Stat_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_Modeles_Hab_Arb.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_Hab_Arb.xlsx")
+```
+
+Couverture Arbustive
+```{r}
+mod_S_Hab <- lmer(
+  S ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arbu_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_SExo_Hab <- lmer(
+  S_Exo ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arbu_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_PANatif_Hab <- glmer(
+  `P/A_Natif` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arbu_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+mod_PAMyna_Hab <- glmer(
+  `P/A_Myna` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arbu_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+summary(mod_S_Hab)
+car::Anova(mod_S_Hab)
+summary(mod_SExo_Hab)
+car::Anova(mod_SExo_Hab)
+summary(mod_PANatif_Hab)
+car::Anova(mod_PANatif_Hab)
+summary(mod_PAMyna_Hab)
+car::Anova(mod_PAMyna_Hab)
+```
+
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  res <- tidy(mod, effects = "fixed")
+  
+  # vérifier si df existe
+  if(!"df" %in% colnames(res)){
+    res$df <- NA
+  }
+  
+  res %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      Stat_value = round(statistic, 3),  # z ou t
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           Stat_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_Modeles_Hab_Arbu.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_Hab_Arbu.xlsx")
+```
+
+Couverture herbacéee
+```{r}
+mod_S_Hab <- lmer(
+  S ~
+ `HSA_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_SExo_Hab <- lmer(
+  S_Exo ~
+ `HSA_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_PANatif_Hab <- glmer(
+  `P/A_Natif` ~
+ `HSA_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+mod_PAMyna_Hab <- glmer(
+  `P/A_Myna` ~
+ `HSA_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+summary(mod_S_Hab)
+car::Anova(mod_S_Hab)
+summary(mod_SExo_Hab)
+car::Anova(mod_SExo_Hab)
+summary(mod_PANatif_Hab)
+car::Anova(mod_PANatif_Hab)
+summary(mod_PAMyna_Hab)
+car::Anova(mod_PAMyna_Hab)
+```
+
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  res <- tidy(mod, effects = "fixed")
+  
+  # vérifier si df existe
+  if(!"df" %in% colnames(res)){
+    res$df <- NA
+  }
+  
+  res %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      Stat_value = round(statistic, 3),  # z ou t
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           Stat_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_Modeles_Hab_Her.xlsx")
+```
+```{r}
+models <- list(
+  mod_S_Hab = mod_S_Hab,
+  mod_SExo_Hab = mod_SExo_Hab,
+  mod_PANatif_Hab = mod_PANatif_Hab,
+  mod_PAMyna_Hab = mod_PAMyna_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_Hab_Her.xlsx")
+```
+
+
+```{r}
+##Revenir à l’échelle réelle (%)
+mean_her <- mean(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+sd_her   <- sd(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+mean_arbu <- mean(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+sd_arbu   <- sd(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+mean_alt <- mean(DF_IA10_sc$`Alt`, na.rm = TRUE)
+sd_alt   <- sd(DF_IA10_sc$`Alt`, na.rm = TRUE)
+mean_db <- mean(DF_IA10_sc$`D_B`, na.rm = TRUE)
+sd_db   <- sd(DF_IA10_sc$`D_B`, na.rm = TRUE)
+mean_hsa <- mean(DF_IA10_sc$`HSA`, na.rm = TRUE)
+sd_hsa   <- sd(DF_IA10_sc$`HSA`, na.rm = TRUE)
+mean_S <- mean(DF_IA10_sc$`S`, na.rm = TRUE)
+sd_S   <- sd(DF_IA10_sc$`S`, na.rm = TRUE)
+mean_SExo <- mean(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+sd_SExo   <- sd(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+```
+```{r}
+theme_soundscape <- function() {
+  
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
+
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+```
+
+
+```{r}
+pred_S_Arbu <- ggpredict(
+  mod_S_Hab,
+  terms = "Arbu_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_S_Arbu, aes(x = x* sd_arbu+mean_arbu, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#94A3B8"
+  ) +
+  
+  labs(
+    x = "Arbustive cover (%)",
+    y = "Predicted Total Richness (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_SExo_Arbu <- ggpredict(
+  mod_SExo_Hab,
+  terms = "Arbu_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_SExo_Arbu, aes(x = x* sd_arbu+mean_arbu, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#94A3B8"
+  ) +
+  
+  labs(
+    x = "Arbustive cover (%)",
+    y = "Predicted Exotic Richness (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_PANatif_Her <- ggpredict(
+  mod_PANatif_Hab,
+  terms = "Her_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_PANatif_Her, aes(x = x* sd_her+mean_her, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#94A3B8"
+  ) +
+  
+  labs(
+    x = "Herbaceous cover (%)",
+    y = "Predicted Presence Absence (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+

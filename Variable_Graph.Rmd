@@ -1,0 +1,598 @@
+---
+title: "DescriptionSite_Alt_UG"
+output: html_document
+date: "2026-01-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+setwd("~/Césure/Tahiti")
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+```
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+```{r}
+# On crée un index numérique pour l’axe x
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+
+# Dataset pour les rectangles de fond
+communes_bg <- Data_Globale_Tahiti %>%
+  group_by(Commune) %>%
+  summarise(
+    xmin = min(x_id) - 0.5,
+    xmax = max(x_id) + 0.5
+  )
+
+ggplot() +
+  # Fond coloré discret
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin, xmax = xmax,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  geom_col(data = Data_Globale_Tahiti,
+           aes(x = x_id, y = `HSA(%)`),
+           fill = "grey40") +
+  scale_x_continuous(
+    breaks = Data_Globale_Tahiti$x_id,
+    labels = Data_Globale_Tahiti$Enr
+  ) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(x = "Site",
+       y = "Hard Surface Area (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# On crée un index numérique pour l’axe x
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+
+# Dataset pour les rectangles de fond
+communes_bg <- Data_Globale_Tahiti %>%
+  group_by(Commune) %>%
+  summarise(
+    xmin = min(x_id) - 0.5,
+    xmax = max(x_id) + 0.5
+  )
+# Coefficient pour mettre l'altitude à l'échelle des HSA
+coef_alt <- max(Data_Globale_Tahiti$`HSA(%)`, na.rm = TRUE) /
+            max(Data_Globale_Tahiti$`Alt(m)`, na.rm = TRUE)
+
+ggplot() +
+  # Fond coloré discret
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin, xmax = xmax,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Barres HSA
+  geom_col(data = Data_Globale_Tahiti,
+           aes(x = x_id, y = `HSA(%)`),
+           fill = "grey40") +
+  
+  # Points altitude (mis à l’échelle)
+  geom_point(data = Data_Globale_Tahiti,
+             aes(x = x_id, y = `Alt(m)` * coef_alt),
+             shape = 4,              # croix
+             color = "#E5989B",      # rouge pastel doux
+             size = 2,
+             stroke = 0.8,
+             alpha = 0.8) +
+  
+  scale_x_continuous(
+    breaks = Data_Globale_Tahiti$x_id,
+    labels = Data_Globale_Tahiti$Enr
+  ) +
+  geom_line(data = Data_Globale_Tahiti,
+          aes(x = x_id, y = `Alt(m)`* coef_alt, group = 1),
+          color = "#E5989B",
+          linewidth = 0.7) +
+  
+  scale_y_continuous(
+    name = "Hard Surface Area (%)",
+    sec.axis = sec_axis(~ . / coef_alt,
+                        name = "Altitude (m)")
+  ) +
+  
+  scale_fill_brewer(palette = "Paired") +
+  
+  labs(x = "Site") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+ggplot() +
+  # Fond coloré discret
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin, xmax = xmax,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  geom_col(data = Data_Globale_Tahiti,
+           aes(x = x_id, y = `Alt(m)`),
+           fill = "grey40") +
+  scale_x_continuous(
+    breaks = Data_Globale_Tahiti$x_id,
+    labels = Data_Globale_Tahiti$Enr
+  ) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(x = "Site",
+       y = "Altitude (m)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+# On crée un index numérique pour l’axe x
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+
+# Dataset pour les rectangles de fond
+communes_bg <- Data_Globale_Tahiti %>%
+  group_by(Commune) %>%
+  summarise(
+    xmin = min(x_id) - 0.5,
+    xmax = max(x_id) + 0.5
+  )
+
+# Format long pour empilement correct
+Data_plot <- Data_Globale_Tahiti %>%
+  mutate(
+    S_Natif = S - S_Exo
+  ) %>%
+  select(x_id, Enr, S, S_Exo, S_Natif, `P/A_Myna`) %>%
+  pivot_longer(cols = c(S_Exo, S_Natif),
+               names_to = "Type",
+               values_to = "Richesse")
+
+ggplot(Data_plot, aes(x = factor(x_id), y = Richesse, fill = Type)) +
+  
+  # Barres empilées
+  geom_col(color = "black") +
+  
+  # Point Myna au sommet
+  geom_point(data = Data_Globale_Tahiti %>%
+               mutate(S_Natif = S - S_Exo) %>%
+               filter(`P/A_Myna` == 1),
+             aes(x = factor(x_id), 
+                 y = S,
+                 color = "Myna"),
+             size = 3,
+             inherit.aes = FALSE) +
+  
+  # Couleurs barres
+  scale_fill_manual(values = c(
+    "S_Exo" = "#FCA5A5",
+    "S_Natif" = "#BFE3C0"
+  ),
+  labels = c("Exotic", "Native"),
+  name = "Type d'espèces") +
+  
+  # Couleur point
+  scale_color_manual(values = c("Myna" = "#FFD700")) +
+  
+  scale_x_discrete(labels = Data_Globale_Tahiti$Enr) +
+  scale_y_continuous(breaks = 0:y_max, limits = c(0, y_max)) +
+  
+  labs(x = "Site",
+       y = "Species Richness") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+
+```{r}
+Data_long <- Data_Globale_Tahiti %>%
+  pivot_longer(
+    cols = c(`D_R_P(m)`, `D_M(m)`, `D_B(m)`),
+    names_to = "Plage",
+    values_to = "Distance"
+  )
+
+Data_long$Distance_km <- Data_long$Distance / 1000
+
+ggplot(Data_long, aes(x = Enr, y = Distance_km, fill = Plage)) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  
+  scale_y_continuous(
+    breaks = seq(0, 7.5, by = 1)
+  ) +
+  
+  coord_flip() +
+  
+  scale_fill_brewer(
+  palette = "Pastel1",
+  labels = c("Distance Building", "Distance Sea", "Distance Principal Road")
+  ) +
+  
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_line(color = "grey80", linewidth = 0.5),
+    legend.position = "top"
+  ) +
+  
+  labs(
+    x = "Site",
+    y = "Distance (km)",
+  )
+
+```
+
+
+```{r}
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    jours_enregistrement = as.numeric(
+      difftime(Fin, Début, units = "days")
+    )
+  )
+total_jours <- sum(Data_Globale_Tahiti$jours_enregistrement, na.rm = TRUE)
+
+total_jours
+```
+Structure que l'on veut garder pour les analyses des différents habitats
+```{r}
+# Forcer l'ordre des habitats
+Data_Globale_Tahiti$Hab <- factor(
+  Data_Globale_Tahiti$Hab,
+  levels = c("Urbain", "Suburbain", "Prairie", "Forêt")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = Hab, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Habitat",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E par type d'habitat (sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+library(emmeans)
+mod_hab <-lmer(`N/E` ~ `Hab` + (1|Commune), data = Data_Globale_Tahiti)
+summary(mod_hab)
+car::Anova(mod_hab)
+emmeans(mod_hab, pairwise ~ Hab)
+emmeans(mod_hab, pairwise ~ Hab, adjust = "tukey")
+
+
+```
+
+
+Ici, Graph + Analyse rapidos des varibales oiseaux, avec certaines environmentales? (Faire sélection après les gros modèles non?)
+```{r}
+# Créer une nouvelle variable regroupant les habitats
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    Habitat_Group = case_when(
+      Hab %in% c("Urbain", "Suburbain") ~ "Urbain",
+      Hab %in% c("Forêt", "Prairie") ~ "Nature",
+      TRUE ~ Hab  # pour les autres éventuels
+    )
+  )
+
+# Forcer l'ordre des groupes
+Data_Globale_Tahiti$Habitat_Group <- factor(
+  Data_Globale_Tahiti$Habitat_Group,
+  levels = c("Urbain", "Nature")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = Habitat_Group, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Type d'habitat regroupé",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E par habitat (Urbain vs Nature, sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+summary(lm(`N/E` ~ `Habitat_Group`, data = Data_Globale_Tahiti))
+```
+```{r}
+# Créer une variable pour 4 catégories de HSA
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(
+    HSA_Group = case_when(
+      `HSA(%)` <= 0.10 ~ "≤ 10%",
+      `HSA(%)` > 0.10 & `HSA(%)` <= 0.25 ~ "10–25%",
+      `HSA(%)` > 0.25 & `HSA(%)` <= 0.50 ~ "25–50%",
+      `HSA(%)` > 0.50 ~ "> 50%"
+    )
+  )
+
+# Forcer l'ordre des catégories
+Data_Globale_Tahiti$HSA_Group <- factor(
+  Data_Globale_Tahiti$HSA_Group,
+  levels = c("≤ 10%", "10–25%", "25–50%", "> 50%")
+)
+
+# Graphique : boîte à moustaches + points + moyenne + SE
+ggplot(Data_Globale_Tahiti,
+       aes(x = HSA_Group, y = `N/E`)) +
+  
+  # Boîte à moustaches
+  geom_boxplot(
+    fill = "grey80",
+    alpha = 0.7,
+    outlier.shape = NA
+  ) +
+  
+  # Points par site
+  geom_jitter(
+    width = 0.15,
+    alpha = 0.6,
+    size = 2
+  ) +
+  
+  # Moyenne
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  # Erreur standard (SE)
+  stat_summary(
+    fun.data = mean_se,
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  labs(
+    x = "Catégorie HSA (%)",
+    y = "Proportion d'espèces native (N/E)",
+    title = "Proportion N/E selon HSA (sites, moyenne ± SE)"
+  ) +
+  
+  theme_minimal()
+
+summary(lm(`N/E` ~ `HSA_Group`, data = Data_Globale_Tahiti))
+```
+
+
+```{r}
+Data_Global_Long <- pivot_longer(Data_Globale_Tahiti,
+                          cols = c(`Arb(%)`, `Arbu(%)`, `Her(%)`),
+                          names_to = "Vegetation",
+                          values_to = "Pourcentage")
+
+# Calculer moyenne et écart-type par habitat
+Richesse_Habitat <- Data_Globale_Tahiti %>%
+  group_by(Hab) %>%
+  summarise(S_mean = mean(S, na.rm = TRUE),
+            S_sd = sd(S, na.rm = TRUE),
+            S_Exo_mean = mean(S_Exo, na.rm = TRUE),
+            S_Exo_sd = sd(S_Exo, na.rm = TRUE))
+
+# Graph combiné
+ggplot() +
+  # Boxplots végétation
+  geom_boxplot(data = Data_Global_Long,
+               aes(x = Hab, y = Pourcentage, fill = Vegetation),
+               position = position_dodge(width = 0.8),
+               outlier.shape = NA) +
+  geom_jitter(data = Data_Global_Long,
+              aes(x = Hab, y = Pourcentage),
+              position = position_jitterdodge(jitter.width = 0.15),
+              size = 1, alpha = 0.5, color = "grey20") +
+  
+  # Points pour richesse moyenne avec écart-type
+  geom_point(data = Richesse_Habitat, 
+             aes(x = Hab, y = S_mean * 10, color = "S_Total"), size = 3) +
+  geom_errorbar(data = Richesse_Habitat,
+                aes(x = Hab, ymin = (S_mean - S_sd) * 10, 
+                    ymax = (S_mean + S_sd) * 10, color = "S_Total"), width = 0.2) +
+  
+  geom_point(data = Richesse_Habitat, 
+             aes(x = Hab, y = S_Exo_mean * 10, color = "S_Exo"), size = 3) +
+  geom_errorbar(data = Richesse_Habitat,
+                aes(x = Hab, ymin = (S_Exo_mean - S_Exo_sd) * 10, 
+                    ymax = (S_Exo_mean + S_Exo_sd) * 10, color = "S_Exo"), width = 0.2) +
+  
+  # Lignes reliant les points par type de richesse
+  geom_line(data = Richesse_Habitat,
+            aes(x = Hab, y = S_mean * 10, group = 1, color = "S_Total"), size = 1) +
+  geom_line(data = Richesse_Habitat,
+            aes(x = Hab, y = S_Exo_mean * 10, group = 1, color = "S_Exo"), size = 1) +
+  
+  # Couleurs
+  scale_fill_grey(start = 0.3, end = 0.8,labels = c("Tree", "Shrub", "Grass")) +
+  scale_color_manual(values = c("S_Total" = "#1f77b4", "S_Exo" = "#ff7f0e"), labels = c("Total Richness", "Exotic Richness"), name = "Richesse") +
+  
+  # Axe secondaire
+  scale_y_continuous(
+    name = "Vegetation cover",
+    limits = c(0, 100),
+    sec.axis = sec_axis(~ ./10, name = "Species Richness", breaks = 1:10)
+  ) +
+  
+  labs(x = "Habitat") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+
+
+
+ggplot(Data_Global_Long, aes(x = Hab, y = Pourcentage, fill = Vegetation)) +
+  geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.15),
+              size = 1, alpha = 0.5, color = "grey20") +
+  scale_fill_grey(start = 0.3, end = 0.8) +
+  theme_minimal()
+```
+```{r}
+Data_Commune_Hab <- Data_Globale_Tahiti %>%
+  group_by(Commune, Hab) %>%
+  summarise(N_sites = n(), .groups = "drop")
+
+ggplot(Data_Commune_Hab,
+       aes(x = Commune, y = N_sites, fill = Hab)) +
+  
+  geom_col(position = "fill", color = "black") +
+  
+  # Ajout des effectifs dans les barres
+  geom_text(aes(label = N_sites),
+            position = position_fill(vjust = 0.5),
+            color = "black",
+            size = 4) +
+  
+  scale_fill_manual(values = c(
+    "Forêt" = "#2E7D32",
+    "Prairie" = "#FBC02D",
+    "Suburbain" = "#1E88E5",
+    "Urbain" = "#8D6E63"
+  )) +
+  
+  labs(x = "Commune",
+       y = "Number of Sites",
+       fill = "Habitat") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+Data_Globale_Tahiti <- Data_Globale_Tahiti %>%
+  mutate(Habitat_group = case_when(
+    Hab %in% c("Forêt", "Prairie") ~ "Naturel",
+    Hab %in% c("Suburbain", "Urbain") ~ "Anthropisé"
+  ))
+
+Data_Commune_Hab <- Data_Globale_Tahiti %>%
+  group_by(Commune, Habitat_group) %>%
+  summarise(N_sites = n(), .groups = "drop")
+
+ggplot(Data_Commune_Hab,
+       aes(x = Commune, y = N_sites, fill = Habitat_group)) +
+  
+  geom_col(position = "fill", color = "black") +
+  
+  geom_text(aes(label = N_sites),
+            position = position_fill(vjust = 0.5),
+            size = 5) +
+  
+  scale_fill_manual(values = c(
+    "Naturel" = "#2E7D32",
+    "Anthropisé" = "#8D6E63"
+  )) +
+  
+  labs(x = "Commune",
+       y = "Proportion de sites",
+       fill = "Type d'habitat") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```

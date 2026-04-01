@@ -1,0 +1,783 @@
+---
+title: "Mod_IA_Hab"
+output: html_document
+date: "2026-02-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour les analyses et exportations des tableaux
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(tibble)
+library(ggeffects)
+library(tidyverse)
+library(broom.mixed)
+```
+
+Traitement Indice acoustique
+Import sur un DF différent de tout les indices et audio de 10 minutes
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Pour DF_IA_5 et DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
+```{r}
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+#On rajoute les variables principales pour chaque ligne  d'indice pour les fichiers analysés
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  dplyr::select(-Fichier,
+         -EAA)
+```
+On créer les variables adéquate pour l'heure + minute, l'heure et la date
+Pareil pour DF_IA10
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA10$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques, vérifier que la tz, time zone match bien, sinon ca peut modifier nos dates.
+DF_IA10$date  <- as.Date(DF_IA10$datetime, tz = "Pacific/Tahiti")
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tahiti"))
+DF_IA10 <- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
+```
+
+Ajout data météo quotidienne, précipitation jour et Température max pour DF_IA10, plus seulement une valeur pour toute la durée pour un site
+```{r}
+Data_Meteo10 <- read_excel("Data_temp_prec.xlsx")
+
+DF_IA10$date <- as.Date(DF_IA10$date)
+Data_Meteo10$date <- as.Date(Data_Meteo10$date)
+Data_Meteo10$rr <- as.numeric(Data_Meteo10$rr)
+Data_Meteo10$tx <- as.numeric(Data_Meteo10$tx)
+
+DF_IA10 <- DF_IA10 %>%
+  mutate(id_row = row_number())
+# Split stations précip
+prec_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+# Moyenne par ligne originale 
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA10 <- DF_IA10 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+Centré_réduire les variables d'intérêt pour modélisation
+```{r}
+DF_IA10_sc <- DF_IA10 %>%
+  mutate(
+    across(
+      c(`Alt`, `rr_meteo`, `tx_meteo`,`D_B`,
+        `HSA`,`Arb`, `Arbu`, `Her`),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+Les 4 prédicteurs avec toutes les végétations, variable d'urbanisation, d'altitude et meteo, avec six indices acoustiques donc des gaussians, un effet Commune + Enr. On inclue également l'heure dans nos analyses (à inclure, n'a pas d'effet conséquent sur les autres variables)
+
+```{r}
+mod_ADI_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+summary(mod_ADI_Hab)
+car::Anova(mod_ADI_Hab)
+summary(mod_ACI_Hab)
+car::Anova(mod_ACI_Hab)
+summary(mod_AEI_Hab)
+car::Anova(mod_AEI_Hab)
+summary(mod_BIO_Hab)
+car::Anova(mod_BIO_Hab)
+summary(mod_H_Hab)
+car::Anova(mod_H_Hab)
+summary(mod_M_Hab)
+car::Anova(mod_M_Hab)
+```
+Exportation des tableaux de modèle linéaire et Anova, a faire juste après avoir fait tourner les modèles car mêmes non de modèles entre Tot, Arb, Arbu et Her
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_Hab_tot.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_Hab_tot.xlsx")
+```
+
+Modèle avec seulement la couverture arborée
+```{r}
+mod_ADI_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+
+summary(mod_ADI_Hab)
+car::Anova(mod_ADI_Hab)
+summary(mod_ACI_Hab)
+car::Anova(mod_ACI_Hab)
+summary(mod_AEI_Hab)
+car::Anova(mod_AEI_Hab)
+summary(mod_BIO_Hab)
+car::Anova(mod_BIO_Hab)
+summary(mod_H_Hab)
+car::Anova(mod_H_Hab)
+summary(mod_M_Hab)
+car::Anova(mod_M_Hab)
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_Hab_Arb.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_Hab_Arb.xlsx")
+```
+
+Modèle pour couvert arborée
+```{r}
+mod_ADI_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+
+summary(mod_ADI_Hab)
+car::Anova(mod_ADI_Hab)
+summary(mod_ACI_Hab)
+car::Anova(mod_ACI_Hab)
+summary(mod_AEI_Hab)
+car::Anova(mod_AEI_Hab)
+summary(mod_BIO_Hab)
+car::Anova(mod_BIO_Hab)
+summary(mod_H_Hab)
+car::Anova(mod_H_Hab)
+summary(mod_M_Hab)
+car::Anova(mod_M_Hab)
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_Hab_Arbu.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_Hab_Arbu.xlsx")
+```
+
+```{r}
+mod_ADI_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+summary(mod_ADI_Hab)
+car::Anova(mod_ADI_Hab)
+summary(mod_ACI_Hab)
+car::Anova(mod_ACI_Hab)
+summary(mod_AEI_Hab)
+car::Anova(mod_AEI_Hab)
+summary(mod_BIO_Hab)
+car::Anova(mod_BIO_Hab)
+summary(mod_H_Hab)
+car::Anova(mod_H_Hab)
+summary(mod_M_Hab)
+car::Anova(mod_M_Hab)
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_Hab_Her.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_Hab = mod_ADI_Hab,
+  mod_ACI_Hab = mod_ACI_Hab,
+  mod_AEI_Hab = mod_AEI_Hab,
+  mod_BIO_Hab = mod_BIO_Hab,
+  mod_H_Hab    = mod_H_Hab,
+  mod_M_Hab   = mod_M_Hab
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_Hab_Her.xlsx")
+```
+
+

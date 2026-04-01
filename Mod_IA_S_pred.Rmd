@@ -1,0 +1,458 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-03-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour les analyses et exportation des tableaux excel.
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(tibble)
+library(ggeffects)
+library(tidyverse)
+library(broom.mixed)
+```
+
+Traitement Indice acoustique
+Import sur un DF différent de tout les indices et audio de 10 minutes
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Pour DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
+```{r}
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+#On rajoute les variables principales pour chaque ligne  d'indice pour les fichiers analysés
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  dplyr::select(-Fichier,
+         -EAA)
+```
+
+Centré_réduire les variables de communauté pour modélisation
+```{r}
+DF_IA10_sc <- DF_IA10 %>%
+  mutate(
+    across(
+      c(S, S_Exo),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+
+x6 modèle pour chaque variable de communautés avec les indices acoustiques
+```{r}
+mod_ADI_S <- lmer(
+  ADI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S <- lmer(
+  ACI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S<- lmer(
+  AEI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S <- lmer(
+  BIO ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S <- lmer(
+  H ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S <- lmer(
+  M ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Pour richess Exotique
+```{r}
+mod_ADI_SExo <- lmer(
+  ADI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_SExo <- lmer(
+  ACI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_SExo <- lmer(
+  AEI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_SExo <- lmer(
+  BIO ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_SExo <- lmer(
+  H ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_SExo <- lmer(
+  M ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Pour Présence Absence de Natif
+```{r}
+mod_ADI_PANatif <- lmer(
+  ADI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PANatif <- lmer(
+  ACI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PANatif <- lmer(
+  AEI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PANatif <- lmer(
+  BIO ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PANatif <- lmer(
+  H ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PANatif <- lmer(
+  M ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Pour Présence Absence de Common myna
+```{r}
+mod_ADI_PAMyna <- lmer(
+  ADI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PAMyna <- lmer(
+  ACI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PAMyna <- lmer(
+  AEI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PAMyna <- lmer(
+  BIO ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PAMyna <- lmer(
+  H ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PAMyna <- lmer(
+  M ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Test des modèles avec proportion de Natif et Exotique (Bonus)
+```{r}
+mod_ADI_NE <- lmer(
+  ADI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_NE <- lmer(
+  ACI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_NE<- lmer(
+  AEI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_NE <- lmer(
+  BIO ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_NE <- lmer(
+  H ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_NE <- lmer(
+  M ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+```{r}
+##Revenir à l’échelle réelle (%)
+mean_S <- mean(DF_IA10_sc$`S`, na.rm = TRUE)
+sd_S   <- sd(DF_IA10_sc$`S`, na.rm = TRUE)
+mean_SExo <- mean(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+sd_SExo   <- sd(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+```
+```{r}
+theme_soundscape <- function() {
+  
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
+
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+```
+
+```{r}
+pred_ADI_S <- ggpredict(
+  mod_ADI_S,
+  terms = "S_sc [all]"
+)
+
+##Graphique
+ggplot(pred_ADI_S, aes(x = x* sd_S+mean_S, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Total richness",
+    y = "Predicted ADI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_ADI_SExo <- ggpredict(
+  mod_ADI_SExo,
+  terms = "S_Exo_sc [all]"
+)
+
+##Graphique
+ggplot(pred_ADI_SExo, aes(x = x* sd_SExo+mean_SExo, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Exotic Richness",
+    y = "Predicted ADI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+```{r}
+pred_AEI_S <- ggpredict(
+  mod_AEI_S,
+  terms = "S_sc [all]"
+)
+
+##Graphique
+ggplot(pred_AEI_S, aes(x = x* sd_S+mean_S, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Total richness",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_AEI_SExo <- ggpredict(
+  mod_AEI_SExo,
+  terms = "S_Exo_sc [all]"
+)
+
+##Graphique
+ggplot(pred_AEI_SExo, aes(x = x* sd_SExo+mean_SExo, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Exotic Richness",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+
+```{r}
+pred_H_SExo <- ggpredict(
+  mod_H_SExo,
+  terms = "S_Exo_sc [all]"
+)
+
+##Graphique
+ggplot(pred_H_SExo, aes(x = x* sd_SExo+mean_SExo, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Exotic Richness",
+    y = "Predicted H (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_H_PAMyna <- ggpredict(
+  mod_H_PAMyna,
+  terms = "P/A_Myna [all]"
+)
+
+##Graphique
+ggplot(pred_H_PAMyna, aes(x, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Presence Absence Myna",
+    y = "Predicted H (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+
+

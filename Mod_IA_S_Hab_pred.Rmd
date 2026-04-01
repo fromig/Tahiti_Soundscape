@@ -1,0 +1,970 @@
+---
+title: "Mod_IA_S_Hab"
+output: html_document
+date: "2026-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour les analyses 
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(ggeffects)
+library(tibble)
+library(purrr)
+library(broom.mixed)
+```
+
+Traitement Indice acoustique
+Import sur un DF différent de tout les indices et audio en 5 et 10 minutes
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Pour DF_IA_5 et DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
+```{r}
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+#On rajoute les variables principales pour chaque ligne  d'indice pour les fichiers analysés
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  dplyr::select(-Fichier,
+         -EAA)
+```
+On créer les variables adéquate pour l'heure + minute, l'heure et la date
+Pareil pour DF_IA10
+```{r}
+# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
+# Construire un datetime fiable depuis le nom du fichier
+DF_IA10$datetime <- as.POSIXct(
+  paste(
+    substr(f_clean, 10, 17),  # YYYYMMDD
+    substr(f_clean, 19, 24)   # HHMMSS
+  ),
+  format = "%Y%m%d %H%M%S",
+  tz = "Pacific/Tahiti"
+)
+# Colonnes pratiques, vérifier que la tz, time zone match bien, sinon ca peut modifier nos dates.
+DF_IA10$date  <- as.Date(DF_IA10$datetime, tz = "Pacific/Tahiti")
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tahiti"))
+DF_IA10 <- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
+```
+
+
+On fait la même chose pour DF_IA 10
+```{r}
+Data_Meteo10 <- read_excel("Data_temp_prec.xlsx")
+
+DF_IA10$date <- as.Date(DF_IA10$date)
+Data_Meteo10$date <- as.Date(Data_Meteo10$date)
+Data_Meteo10$rr <- as.numeric(Data_Meteo10$rr)
+Data_Meteo10$tx <- as.numeric(Data_Meteo10$tx)
+
+DF_IA10 <- DF_IA10 %>%
+  mutate(id_row = row_number())
+# Split stations précip
+prec_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+# Moyenne par ligne originale 
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA10 <- DF_IA10 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+Centré_réduire les données pour modélisation
+```{r}
+DF_IA10_sc <- DF_IA10 %>%
+  mutate(
+    across(
+      c(`Alt`, `rr_meteo`, `tx_meteo`, `D_B`,
+        `HSA`,`Arb`, `Arbu`, `Her`, `N/E`, `S`, `S_Exo`),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+
+Model complet avec FUll vegetation + S. Pour les six indices
+```{r}
+mod_ADI_S_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+
+Model complet avec FUll vegetation + SExo. Pour les six indices
+```{r}
+mod_ADI_SExo_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_SExo_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_SExo_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_SExo_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_SExo_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_SExo_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+```
+
+Model complet avec FUll vegetation + P/A_Natif. Pour les six indices
+```{r}
+mod_ADI_PANatif_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PANatif_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PANatif_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PANatif_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PANatif_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PANatif_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Model complet avec FUll vegetation + P/A_Myna. Pour les six indices
+```{r}
+mod_ADI_PAMyna_Hab <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PAMyna_Hab <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PAMyna_Hab <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PAMyna_Hab <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PAMyna_Hab <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PAMyna_Hab <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc` +cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+```
+
+Model complet avec S et la végétation adaptée  Pour les six indices
+```{r}
+mod_ADI_S_Habam <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S_Habam <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S_Habam <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S_Habam <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+ `Arb_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S_Habam <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S_Habam <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+Model complet avec Arbuste + SExo. Pour les six indices
+```{r}
+mod_ADI_SExo_Habam <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_SExo_Habam <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_SExo_Habam <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_SExo_Habam <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+ `Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_SExo_Habam <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_SExo_Habam <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+S_Exo_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Model complet avec vgetation adaptée + P/A_Natif. Pour les six indices
+```{r}
+mod_ADI_PANatif_Habam <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PANatif_Habam <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) +`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PANatif_Habam <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PANatif_Habam <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PANatif_Habam <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PANatif_Habam <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+```
+
+Model complet avec Herbacée + P/A_Natif. Pour les six indices
+```{r}
+mod_ADI_PAMyna_Habam <- lmer(
+  ADI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_PAMyna_Habam <- lmer(
+  ACI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_PAMyna_Habam <- lmer(
+  AEI ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_PAMyna_Habam <- lmer(
+  BIO ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_PAMyna_Habam <- lmer(
+  H ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arbu_sc`+`Her_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_PAMyna_Habam <- lmer(
+  M ~
+ `HSA_sc`+`rr_meteo_sc` +`tx_meteo_sc` +`Alt_sc` +`D_B_sc`+`Arb_sc`+cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)+`P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+```
+
+```{r}
+##Revenir à l’échelle réelle (%)
+mean_her <- mean(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+sd_her   <- sd(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+mean_arbu <- mean(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+sd_arbu   <- sd(DF_IA10_sc$`Arbu`, na.rm = TRUE)
+mean_alt <- mean(DF_IA10_sc$`Alt`, na.rm = TRUE)
+sd_alt   <- sd(DF_IA10_sc$`Alt`, na.rm = TRUE)
+mean_rr <- mean(DF_IA10_sc$`rr_meteo`, na.rm = TRUE)
+sd_rr   <- sd(DF_IA10_sc$`rr_meteo`, na.rm = TRUE)
+mean_tx <- mean(DF_IA10_sc$`tx_meteo`, na.rm = TRUE)
+sd_tx   <- sd(DF_IA10_sc$`tx_meteo`, na.rm = TRUE)
+mean_db <- mean(DF_IA10_sc$`D_B`, na.rm = TRUE)
+sd_db   <- sd(DF_IA10_sc$`D_B`, na.rm = TRUE)
+mean_hsa <- mean(DF_IA10_sc$`HSA`, na.rm = TRUE)
+sd_hsa   <- sd(DF_IA10_sc$`HSA`, na.rm = TRUE)
+mean_S <- mean(DF_IA10_sc$`S`, na.rm = TRUE)
+sd_S   <- sd(DF_IA10_sc$`S`, na.rm = TRUE)
+mean_SExo <- mean(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+sd_SExo   <- sd(DF_IA10_sc$`S_Exo`, na.rm = TRUE)
+```
+```{r}
+theme_soundscape <- function() {
+  
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
+
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+```
+
+```{r}
+pred_ADI_SExo_Alt <- ggpredict(
+  mod_ADI_SExo_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_ADI_SExo_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted ADI (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+```
+
+
+```{r}
+pred_ACI_S_rr <- ggpredict(
+  mod_ACI_S_Hab,
+  terms = "rr_meteo_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_ACI_S_rr, aes(x = x* sd_rr+mean_rr, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#AEC6FF"
+  ) +
+  
+  labs(
+    x = "Rainfall (mm)",
+    y = "Predicted ACI (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+```
+
+```{r}
+pred_AEI_SExo_Alt <- ggpredict(
+  mod_AEI_SExo_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_ADI_SExo_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_AEI_PAMyna_Hab <- ggpredict(
+  mod_AEI_PAMyna_Habam,
+  terms = "P/A_Myna [all]"
+)
+
+
+##Graphique
+ggplot(pred_AEI_PAMyna_Hab, aes(x = x, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Presence Myna",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_H_PAMyna_Hab <- ggpredict(
+  mod_H_PAMyna_Habam,
+  terms = "P/A_Myna [all]"
+)
+
+
+##Graphique
+ggplot(pred_H_PAMyna_Hab, aes(x = x, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCA9DD"
+  ) +
+  
+  labs(
+    x = "Presence Myna",
+    y = "Predicted H (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_AEI_S_Her <- ggpredict(
+  mod_AEI_S_Hab,
+  terms = "Her_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_AEI_S_Her, aes(x = x* sd_her+mean_her, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Herbaceous cover (%)",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_AEI_PANatif_Arbu <- ggpredict(
+  mod_AEI_PANatif_Hab,
+  terms = "Arbu_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_AEI_PANatif_Arbu, aes(x = x* sd_arbu+mean_arbu, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Arbustive cover (%)",
+    y = "Predicted AEI (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+```
+
+```{r}
+pred_BIO_S_Her <- ggpredict(
+  mod_BIO_S_Hab,
+  terms = "Her_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_BIO_S_Her, aes(x = x* sd_her+mean_her, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Herbaceous cover (%)",
+    y = "Predicted BIO (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_BIO_S_D_B <- ggpredict(
+  mod_BIO_S_Hab,
+  terms = "D_B_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_BIO_S_D_B, aes(x = x* sd_db+mean_db, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#D9D9D9"
+  ) +
+  
+  labs(
+    x = "Distance to Building (m)",
+    y = "Predicted BIO (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_BIO_S_rr <- ggpredict(
+  mod_BIO_S_Hab,
+  terms = "rr_meteo_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_BIO_S_rr, aes(x = x* sd_rr+mean_rr, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#AEC6FF"
+  ) +
+  
+  labs(
+    x = "Rainfall (mm)",
+    y = "Predicted BIO (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_BIO_S_tx <- ggpredict(
+  mod_BIO_S_Hab,
+  terms = "tx_meteo_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_BIO_S_tx, aes(x = x* sd_tx+mean_tx, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#AEC6FF"
+  ) +
+  
+  labs(
+    x = "Temperature (°C)",
+    y = "Predicted BIO (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_BIO_S_Alt <- ggpredict(
+  mod_BIO_S_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_BIO_S_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted BIO (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+```
+
+```{r}
+pred_H_S_Her <- ggpredict(
+  mod_H_S_Hab,
+  terms = "Her_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_H_S_Her, aes(x = x* sd_her+mean_her, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Herbaceous cover (%)",
+    y = "Predicted H (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_H_S_HSA <- ggpredict(
+  mod_H_S_Hab,
+  terms = "HSA_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_H_S_HSA, aes(x = x* sd_hsa+mean_hsa, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#D9D9D9"
+  ) +
+  
+  labs(
+    x = "Hard Surface Area (%)",
+    y = "Predicted H (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+
+```{r}
+pred_M_S_rr <- ggpredict(
+  mod_M_S_Hab,
+  terms = "rr_meteo_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_M_S_rr, aes(x = x* sd_rr+mean_rr, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#AEC6FF"
+  ) +
+  
+  labs(
+    x = "Rainfall (mm)",
+    y = "Predicted M (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_M_S_tx <- ggpredict(
+  mod_M_S_Hab,
+  terms = "tx_meteo_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_M_S_tx, aes(x = x* sd_tx+mean_tx, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#AEC6FF"
+  ) +
+  
+  labs(
+    x = "Temperature (°C)",
+    y = "Predicted M (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_M_S_Alt <- ggpredict(
+  mod_M_S_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_M_S_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted M (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+```
+
+

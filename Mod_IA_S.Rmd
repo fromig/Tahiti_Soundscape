@@ -1,0 +1,832 @@
+---
+title: "Mod_IA_S"
+output: html_document
+date: "2026-02-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour les analyses et exportation des tableaux excel.
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(tibble)
+library(ggeffects)
+library(tidyverse)
+library(broom.mixed)
+```
+
+Traitement Indice acoustique
+Import sur un DF différent de tout les indices et audio de 10 minutes
+```{r}
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
+fichiers_xlsx <- list.files(
+  chemin,
+  pattern = "\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
+IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
+```
+
+Pour DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
+```{r}
+IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  dplyr::rename(Enr = projet)
+
+IA_10m <- IA_10m_0.3_8Khz %>%
+  group_by(Enr, fichier) %>%
+  summarise(
+    ACI = first(ACI_val),
+    ADI = first(ADI_val.adi_left),
+    AEI  = first(AEI_val.aei_left),
+    BIO  = first(BIO_val.left_area),
+    H = first(H_val),
+    M = first(M_val),
+    .groups = "drop"
+  )
+#On rajoute les variables principales pour chaque ligne  d'indice pour les fichiers analysés
+DF_IA10 <- IA_10m %>%
+  left_join(
+    Data_Globale_Tahiti,
+    by = "Enr"
+  ) %>%
+  dplyr::select(-Fichier,
+         -EAA)
+```
+
+Centré_réduire les variables de communauté pour modélisation
+```{r}
+DF_IA10_sc <- DF_IA10 %>%
+  mutate(
+    across(
+      c(S, S_Exo),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+
+x6 modèle pour chaque variable de communautés avec les indices acoustiques
+```{r}
+mod_ADI_S <- lmer(
+  ADI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S <- lmer(
+  ACI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S<- lmer(
+  AEI ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S <- lmer(
+  BIO ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S <- lmer(
+  H ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S <- lmer(
+  M ~ S_sc+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+summary(mod_ADI_S)
+car::Anova(mod_ADI_S)
+summary(mod_ACI_S)
+car::Anova(mod_ACI_S)
+summary(mod_AEI_S)
+car::Anova(mod_AEI_S)
+summary(mod_BIO_S)
+car::Anova(mod_BIO_S)
+summary(mod_H_S)
+car::Anova(mod_H_S)
+summary(mod_M_S)
+car::Anova(mod_M_S)
+```
+Exportation des tableaux de modèles linéaires + Anova, à faire après l'analyse du modèle car plusieurs modèles ont le même noms de variable pour simplifier les choses entre S, S_Exo, PA_Natif et PA_Myna (tous mod_ADI_S par exemple)
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_S.xlsx")
+```
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_S.xlsx")
+```
+
+
+Pour richess Exotique
+```{r}
+mod_ADI_S <- lmer(
+  ADI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S <- lmer(
+  ACI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S<- lmer(
+  AEI ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S <- lmer(
+  BIO ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S <- lmer(
+  H ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S <- lmer(
+  M ~ S_Exo_sc + (1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+
+summary(mod_ADI_S)
+car::Anova(mod_ADI_S)
+summary(mod_ACI_S)
+car::Anova(mod_ACI_S)
+summary(mod_AEI_S)
+car::Anova(mod_AEI_S)
+summary(mod_BIO_S)
+car::Anova(mod_BIO_S)
+summary(mod_H_S)
+car::Anova(mod_H_S)
+summary(mod_M_S)
+car::Anova(mod_M_S)
+```
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_S_Exo_.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_S_Exo.xlsx")
+```
+
+Pour Présence Absence de Natif
+```{r}
+mod_ADI_S <- lmer(
+  ADI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S <- lmer(
+  ACI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S<- lmer(
+  AEI ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S <- lmer(
+  BIO ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S <- lmer(
+  H ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S <- lmer(
+  M ~ `P/A_Natif`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+summary(mod_ADI_S)
+car::Anova(mod_ADI_S)
+summary(mod_ACI_S)
+car::Anova(mod_ACI_S)
+summary(mod_AEI_S)
+car::Anova(mod_AEI_S)
+summary(mod_BIO_S)
+car::Anova(mod_BIO_S)
+summary(mod_H_S)
+car::Anova(mod_H_S)
+summary(mod_M_S)
+car::Anova(mod_M_S)
+```
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_PANatif.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_PANatif.xlsx")
+```
+
+Pour Présence Absence de Common myna
+```{r}
+mod_ADI_S <- lmer(
+  ADI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_S <- lmer(
+  ACI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_S<- lmer(
+  AEI ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_S <- lmer(
+  BIO ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_H_S <- lmer(
+  H ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_S <- lmer(
+  M ~ `P/A_Myna`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+summary(mod_ADI_S)
+car::Anova(mod_ADI_S)
+summary(mod_ACI_S)
+car::Anova(mod_ACI_S)
+summary(mod_AEI_S)
+car::Anova(mod_AEI_S)
+summary(mod_BIO_S)
+car::Anova(mod_BIO_S)
+summary(mod_H_S)
+car::Anova(mod_H_S)
+summary(mod_M_S)
+car::Anova(mod_M_S)
+```
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_PAMyna.xlsx")
+```
+
+```{r}
+models <- list(
+  mod_ADI_S = mod_ADI_S,
+  mod_ACI_S = mod_ACI_S,
+  mod_AEI_S = mod_AEI_S,
+  mod_BIO_S = mod_BIO_S,
+  mod_H_S   = mod_H_S,
+  mod_M_S   = mod_M_S
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_PAMyna.xlsx")
+```
+
+Test des modèles avec proportion de Natif et Exotique (Bonus)
+```{r}
+mod_ADI_NE <- lmer(
+  ADI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_ACI_NE <- lmer(
+  ACI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_AEI_NE<- lmer(
+  AEI ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_BIO_NE <- lmer(
+  BIO ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_Scale,
+  REML = FALSE
+)
+mod_H_NE <- lmer(
+  H ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+mod_M_NE <- lmer(
+  M ~ `N/E`+(1 | Commune/Enr),
+  data = DF_IA10_sc,
+  REML = FALSE
+)
+
+
+summary(mod_ADI_NE)
+car::Anova(mod_ADI_NE)
+summary(mod_ACI_NE)
+car::Anova(mod_ACI_NE)
+summary(mod_AEI_NE)
+car::Anova(mod_AEI_NE)
+summary(mod_BIO_NE)
+car::Anova(mod_BIO_NE)
+summary(mod_H_NE)
+car::Anova(mod_H_NE)
+summary(mod_M_NE)
+car::Anova(mod_M_NE)
+```
+```{r}
+models <- list(
+  mod_ADI_NE = mod_ADI_NE,
+  mod_ACI_NE = mod_ACI_NE,
+  mod_AEI_NE = mod_AEI_NE,
+  mod_BIO_NE = mod_BIO_NE,
+  mod_H_NE   = mod_H_NE,
+  mod_M_NE   = mod_M_NE
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001, 
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+table_final <- imap_dfr(models, function(mod, name) {
+  
+  tidy(mod, effects = "fixed") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Estimate = round(estimate, 3),
+      Std_Error = round(std.error, 3),
+      df = round(df, 2),
+      t_value = round(statistic, 3),
+      p_raw = p.value,
+      p_value = format_pvalue(p.value),
+      stars = add_stars(p.value),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor = term,
+           AIC,
+           Estimate,
+           Std_Error,
+           df,
+           t_value,
+           p_display)
+})
+write_xlsx(table_final, "Resultats_LMM_IA_NE.xlsx")
+```
+```{r}
+models <- list(
+  mod_ADI_NE = mod_ADI_NE,
+  mod_ACI_NE = mod_ACI_NE,
+  mod_AEI_NE = mod_AEI_NE,
+  mod_BIO_NE = mod_BIO_NE,
+  mod_H_NE   = mod_H_NE,
+  mod_M_NE   = mod_M_NE
+)
+format_pvalue <- function(p) {
+  ifelse(p < 0.0001,
+         "0.0001",
+         format(round(p, 4), nsmall = 4))
+}
+add_stars <- function(p) {
+  case_when(
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    p < 0.1   ~ ".",
+    TRUE ~ ""
+  )
+}
+anova_table <- imap_dfr(models, function(mod, name) {
+  
+  aov_res <- car::Anova(mod, type = 2)
+  
+  as.data.frame(aov_res) %>%
+    rownames_to_column("Community_factor") %>%
+    mutate(
+      Model = name,
+      AIC = round(AIC(mod), 1),
+      Chisq = round(Chisq, 3),
+      Df = Df,
+      p_value = format_pvalue(`Pr(>Chisq)`),
+      stars = add_stars(`Pr(>Chisq)`),
+      p_display = paste0(p_value, " ", stars)
+    ) %>%
+    select(Model,
+           Community_factor,
+           AIC,
+           Chisq,
+           Df,
+           p_display)
+})
+write_xlsx(anova_table, "Resultats_ANOVA_IA_NE.xlsx")
+```

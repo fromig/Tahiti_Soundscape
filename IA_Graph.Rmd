@@ -48,19 +48,9 @@ library(tidyr)
 ```
 
 Traitement Indice acoustique
-Import des excel 5 et 10m avec les varibales Enr sur DF_IA5 et DF_IA10
+Import des excel 5 et 10m avec les varibales Enr sur DF_IA10 et DF_IA10
 ```{r}
-chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
-fichiers_xlsx <- list.files(
-  chemin,
-  pattern = "\\.xlsx$",
-  recursive = TRUE,
-  full.names = TRUE
-)
-IA_5m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
-IA_5m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
-
-chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_0.3_8Khz"
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
 fichiers_xlsx <- list.files(
   chemin,
   pattern = "\\.xlsx$",
@@ -73,23 +63,6 @@ IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
 
 Nettoyage des indices acoustiques et on garde une ligne par fichier
 ```{r}
-IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
-  select(where(~ !all(is.na(.)))) %>%
-  select(-ADI_val.left_band_values,
-         -ADI_val.left_bandrange_values) %>%
-  rename(Enr = projet)
-IA_5m <- IA_5m_0.3_8Khz %>%
-  group_by(Enr, fichier) %>%
-  summarise(
-    ACI = first(ACI_val),
-    ADI = first(ADI_val.adi_left),
-    AEI  = first(AEI_val.aei_left),
-    BIO  = first(BIO_val.left_area),
-    H = first(H_val),
-    M = first(M_val),
-    .groups = "drop"
-  )
-
 IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
   select(where(~ !all(is.na(.)))) %>%
   select(-ADI_val.left_band_values,
@@ -107,13 +80,6 @@ IA_10m <- IA_10m_0.3_8Khz %>%
     .groups = "drop"
   )
 
-DF_IA5 <- IA_5m %>%
-  left_join(
-    Data_Globale_Tahiti,
-    by = "Enr"
-  ) %>%
-  select(-Fichier,
-         -EAA)
 DF_IA10 <- IA_10m %>%
   left_join(
     Data_Globale_Tahiti,
@@ -123,12 +89,12 @@ DF_IA10 <- IA_10m %>%
          -EAA)
 ```
 Ajoute de variable heure pour analyse temporelle
+Pareil pour DF_IA10
 ```{r}
 # Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
-f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
-
+f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
 # Construire un datetime fiable depuis le nom du fichier
-DF_IA5$datetime <- as.POSIXct(
+DF_IA10$datetime <- as.POSIXct(
   paste(
     substr(f_clean, 10, 17),  # YYYYMMDD
     substr(f_clean, 19, 24)   # HHMMSS
@@ -136,49 +102,77 @@ DF_IA5$datetime <- as.POSIXct(
   format = "%Y%m%d %H%M%S",
   tz = "Pacific/Tahiti"
 )
-
-# Colonnes pratiques
-DF_IA5$date  <- as.Date(DF_IA5$datetime)
-DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M")
-DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H"))
-DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
+# Colonnes pratiques, vérifier que la tz, time zone match bien, sinon ca peut modifier nos dates.
+DF_IA10$date  <- as.Date(DF_IA10$datetime, tz = "Pacific/Tahiti")
+DF_IA10$heure <- format(DF_IA10$datetime, "%H:%M", tz = "Pacific/Tahiti")
+DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tahiti"))
+DF_IA10 <- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
 ```
+
+Ajout data météo quotidienne, précipitation jour et Température max
+On fait la même chose pour DF_IA 10
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+Data_Meteo10 <- read_excel("Data_temp_prec.xlsx")
+
+DF_IA10$date <- as.Date(DF_IA10$date)
+Data_Meteo10$date <- as.Date(Data_Meteo10$date)
+Data_Meteo10$rr <- as.numeric(Data_Meteo10$rr)
+Data_Meteo10$tx <- as.numeric(Data_Meteo10$tx)
+
+DF_IA10 <- DF_IA10 %>%
+  mutate(id_row = row_number())
+# Split stations précip
+prec_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Prec) %>%
+  separate_rows(Station_Prec, sep = ",") %>%
+  mutate(Station_Prec = trimws(Station_Prec))
+# Join météo
+prec_join <- prec_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, rr),
+    by = c("Station_Prec" = "nom_usuel", "date" = "date")
+  )
+# Moyenne par ligne originale 
+prec_mean <- prec_join %>%
+  group_by(id_row) %>%
+  summarise(rr_meteo = mean(rr, na.rm = TRUE))
+
+temp_long <- DF_IA10 %>%
+  dplyr::select(id_row, date, Station_Temp) %>%
+  separate_rows(Station_Temp, sep = ",") %>%
+  mutate(Station_Temp = trimws(Station_Temp))
+
+temp_join <- temp_long %>%
+  left_join(
+    Data_Meteo10 %>% dplyr::select(nom_usuel, date, tx),
+    by = c("Station_Temp" = "nom_usuel", "date" = "date")
+  )
+temp_mean <- temp_join %>%
+  group_by(id_row) %>%
+  summarise(tx_meteo = mean(tx, na.rm = TRUE))
+
+DF_IA10 <- DF_IA10 %>%
+  left_join(prec_mean, by = "id_row") %>%
+  left_join(temp_mean, by = "id_row")
+```
+
 Centré_réduite les données pour modélisation
 ```{r}
-DF_IA5_Scale <- DF_IA5 %>%
+DF_IA10_sc <- DF_IA10 %>%
   mutate(
     across(
-      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
-      scale
-    )
-  )
-DF_IA10_Scale <- DF_IA10 %>%
-  mutate(
-    across(
-      c(`ADI`, `ACI`, AEI, BIO, M, H, `Alt(m)`, `P_J_Moy(mm)`, `T_Max_M(C°)`, `Azi(°)`, `D_R_P(m)`, `D_M(m)`, `D_B(m)`, `HSA(%)`,`Arb(%)`, `Arbu(%)`, `Her(%)`, `Ant(%)`, `N/E`, `S`, Nb_Day_2024),
-      scale
+      c(`Alt`, `rr_meteo`, `tx_meteo`,`D_R_P`, `D_M`, `D_B`, `HSA`,`Arb`, `Arbu`, `Her`, `N/E`, `S`),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
     )
   )
 ```
 
 ```{r}
-Data_Global_Long <- pivot_longer(Data_Globale_Tahiti,
-                          cols = c(`Arb(%)`, `Arbu(%)`, `Her(%)`),
-                          names_to = "Vegetation",
-                          values_to = "Pourcentage")
-```
-Graphs des Pourcentages de Végétation par habitats
-```{r}
-ggplot(Data_Global_Long, aes(x = Hab, y = Pourcentage, fill = Vegetation)) +
-  geom_boxplot(position = position_dodge(width = 0.8)) +
-  labs(x = "Type de milieu",
-       y = "Pourcentage (%)",
-       fill = "Végétation") +
-  scale_fill_grey(start = 0.3, end = 0.8) +
-  theme_minimal()
-```
-```{r}
-ggplot(DF_IA5, aes(x = datetime, y = ACI, group = Enr)) +
+ggplot(DF_IA10, aes(x = datetime, y = ACI, group = Enr)) +
   geom_line(color = "grey30") +
   facet_wrap(~ Enr, scales = "free_x") +
   theme_minimal() +
@@ -193,7 +187,7 @@ Code pour avoir des graph temporels par Commune ou autre, chaque jour est indiqu
 
 ```{r}
 # 1️⃣ Filtrer ILM_Paea et trier proprement
-DF_focus <- DF_IA5 %>%
+DF_focus <- DF_IA10 %>%
   filter(Commune == "Pirae") %>%
   arrange(date, datetime)
 
@@ -304,7 +298,7 @@ ggplot(DF_long,
 Dynamique temporelle globale par Habitat, pour tout les sites dispersés dans le temps
 ```{r}
 ### 2️⃣ INDEX HORAIRE PAR JOUR
-DF_focus <- DF_IA5 %>%
+DF_focus <- DF_IA10 %>%
   arrange(date, datetime, heure_num)   %>%
   group_by(date) %>%
   mutate(hour_index = dense_rank(datetime)) %>%
@@ -365,140 +359,72 @@ p <- ggplot(DF_hab,
   )
 print(p)
 ```
-
-
 ```{r}
-# Forcer l'ordre des habitats
-Data_Globale_Tahiti$Hab <- factor(
-  Data_Globale_Tahiti$Hab,
-  levels = c("Urbain", "Suburbain", "Prairie", "Forêt")
-)
-
-# Graphique : boîte à moustaches + points + moyenne + SE
-ggplot(DF_IA5,
-       aes(x = Hab, y = ADI)) +
-  
-  # Boîte à moustaches
-  geom_boxplot(
-    fill = "grey80",
-    alpha = 0.7,
-    outlier.shape = NA
-  ) +
-  
-  # Points par site
-  geom_jitter(
-    width = 0.15,
-    alpha = 0.6,
-    size = 2
-  ) +
-  
-  # Moyenne
-  stat_summary(
-    fun = mean,
-    geom = "point",
-    shape = 18,
-    size = 4,
-    color = "black"
-  ) +
-  
-  # Erreur standard (SE)
-  stat_summary(
-    fun.data = mean_se,
-    geom = "errorbar",
-    width = 0.2,
-    color = "black"
-  ) +
-  
-  labs(
-    x = "Habitat",
-    y = "ADI",
-    title = "Boxplot de l'ADI par type d'habitat"
-  ) +
-  
-  theme_minimal()
-```
-
-```{r}
-ggplot(DF_IA5, aes(x = S, y = BIO, group = Enr)) +
-  stat_summary(fun = mean, geom = "point", size = 2) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    formula = y ~ x,
-    se = TRUE,
-    color = "black",
-    fill = "grey70"
-  ) +
-  labs(
-    x = "N/E (moyenne par Enr)",
-    y = "BIO (moyenne par Enr)"
-  ) +
-  theme_minimal()
-ggplot(DF_IA5, aes(x = `N/E`, y = BIO, group = Enr)) +
-  stat_summary(fun = mean, geom = "point", size = 2) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    formula = y ~ x,
-    se = TRUE,
-    color = "black",
-    fill = "grey70"
-  ) +
-  labs(
-    x = "N/E (moyenne par Enr)",
-    y = "BIO (moyenne par Enr)"
-  ) +
-  theme_minimal()
-
-```
-
-Graphique des liens entre indices et Variable de S et N/E
-```{r}
-indices <- c("ACI", "ADI", "AEI", "BIO", "H", "M")
-DF_long <- DF_IA5 %>%
-  pivot_longer(
-    cols = all_of(indices),
-    names_to = "Indice",
-    values_to = "Valeur"
-  )
-DF_summary <- DF_long %>%
-  group_by(S, Indice) %>%
-  summarise(
-    mean_val = mean(Valeur, na.rm = TRUE),
-    sd_val   = sd(Valeur, na.rm = TRUE),
-    .groups = "drop"
-  )
-ggplot(DF_summary,
-       aes(x = S,
-           y = mean_val)) +
-  geom_point(size = 2) +
-  geom_line () +
-  geom_errorbar(
-    aes(ymin = mean_val - sd_val,
-        ymax = mean_val + sd_val),
-    width = 0.2
-  ) +
-  facet_wrap(~ Indice, scales = "free_y", ncol = 1) +
+ggplot(DF_IA10, aes(x = datetime, y = rr_meteo, group = Commune)) +
+  geom_line(color = "grey30") +
+  facet_wrap(~ Commune, scales = "free_x") +
   theme_minimal() +
   labs(
-    x = "Richesse observée",
-    y = "Valeur de l’indice acoustique",
-    title = "Variabilité des indices acoustiques pour une richesse donnée",
-    subtitle = "Points = moyenne par indice · barres = ± écart-type (variation intra-site)"
+    x = "Day",
+    y = "Rainfall (mm)",
+    title = "Dynamique temporelle de l’ACI par site"
+  )
+```
+
+
+```{r}
+
+# Calcul facteur d'échelle
+coef <- max(DF_IA10$rr_meteo, na.rm = TRUE) /
+        max(DF_IA10$ACI, na.rm = TRUE)
+
+ggplot(DF_IA10, aes(x = datetime)) +
+  
+  # Pluie
+  geom_line(aes(y = rr_meteo),
+            color = "grey30") +
+  
+  # ACI mis à l’échelle
+  geom_line(aes(y = ACI * coef),
+            color = "#1f77b4") +
+  
+  facet_wrap(~ Commune, scales = "free_x") +
+  
+  scale_y_continuous(
+    name = "Rainfall (mm)",
+    sec.axis = sec_axis(~./coef, name = "ACI")
+  ) +
+  
+  theme_minimal() +
+  
+  labs(
+    x = "Day",
+    title = "Temporal dynamic of ACI and Rainfall"
+  )
+```
+
+```{r}
+ggplot(DF_IA10, aes(x = datetime, y = tx_meteo, group = Commune)) +
+  geom_line(color = "grey30") +
+  facet_wrap(~ Commune, scales = "free_x") +
+  theme_minimal() +
+  labs(
+    x = "Day",
+    y = "Temperature",
   )
 ```
 
 Graphique de réduction de la variance des indices avec l'effet d'enregistrement acoustique
 ```{r}
 # 1️⃣ Préparer effort réseau
-DF_IA5 <- DF_IA5 %>%
+DF_IA10 <- DF_IA10 %>%
   arrange(Enr, datetime) %>%
   group_by(Enr) %>%
   mutate(Hour_rank = row_number()) %>%
   ungroup()
 
 # 2️⃣ Effort max commun
-max_hour <- DF_IA5 %>%
+max_hour <- DF_IA10 %>%
   group_by(Enr) %>%
   summarise(n = max(Hour_rank)) %>%
   summarise(mean(n)) %>%
@@ -519,7 +445,7 @@ indices <- c("ACI","ADI","AEI","BIO","H","M")
 res_all <- data.frame()
 for(ind in indices){
   for(h in 1:max_hour){
-    se_val <- calc_network_se(DF_IA5, !!sym(ind), h)
+    se_val <- calc_network_se(DF_IA10, !!sym(ind), h)
     res_all <- rbind(res_all,
       data.frame(
         Index = ind,
@@ -608,102 +534,1152 @@ for(ind in indices){
   }
 }
 ```
+
 ```{r}
-# =========================
-# TABLE 1 — Highest ranking models (Full day)
-# =========================
-
-highest_models_full_day <- data.frame(
-  Model_Type = c("Discrete-indices model", "Pooled-index model"),
-  Model_Formula = c("S ~ AEI_mean + BIO_mean", "S ~ PC1 + PC2"),
-  R2 = c(0.23, 0.18),
-  stringsAsFactors = FALSE
-)
-
-highest_models_full_day
-
-
-# =========================
-# TABLE 2 — Predictor variables (Full day)
-# ΣwAIC ; β (CI)
-# =========================
-
-predictor_full_day <- data.frame(
-  Predictor = c(
-    "AEI mean",
-    "ADI mean",
-    "ACI mean",
-    "H mean",
-    "BIO mean",
-    "BIO sd",
-    "AEI sd",
-    "ACI sd",
-    "H sd",
-    "ADI sd",
-    "M sd",
-    "M mean"
-  ),
+theme_soundscape <- function() {
   
-  Sum_wAIC = c(
-    0.17,
-    0.08,
-    0.14,
-    0.09,
-    0.08,
-    0.14,
-    0.02,
-    0.96
-  ),
-  
-  Beta = c(
-    0,682,
-    -0,554,
-    0,477,
-    -0,419,
-    0,339,
-    0,310,
-    -0,28,
-    0,209,
-    0,177,
-    -0,172,
-    0,163,
-    -0,108,
-  ),
-  
-  CI_lower = c(
-    0,287,
-    -0,964,
-    0,06,
-    -0,842,
-    -0,089,
-    -0,119,
-    -0,712,
-    -0,225,
-    -0,258,
-    -0,608,
-    -0,273,
-    -0,546
-  ),
-  
-  CI_upper = c(
-    1,076,
-    -0,143,
-    0,895,
-    0,003,
-    0,767,
-    0,74,
-    0,151,
-    0,644,
-    0,613,
-    0,264,
-    0,599,
-    0,329
-  ),
-  
-  stringsAsFactors = FALSE
-)
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
 
-predictor_full_day
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+
+ggplot(Data_Globale_Tahiti, aes(x = HSA, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = FALSE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = HSA, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(breaks = 3:11) +
+  
+  labs(
+    x = "Hard Surface Area (%)",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
+
+ggplot(Data_Globale_Tahiti, aes(x = D_B, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = FALSE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = D_B, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  scale_y_continuous(breaks = 3:11) +
+  
+  labs(
+    x = "Hard Surface Area (%)",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
+
+ggplot(Data_Globale_Tahiti, aes(x = Alt, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = TRUE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = Alt, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  labs(
+    x = "Distance to Building (m)",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
 ```
 
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = Arb, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = TRUE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = Arb, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  labs(
+    x = "Tree cover",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
+
+ggplot(Data_Globale_Tahiti, aes(x = Arbu, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = TRUE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = Arbu, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  labs(
+    x = "Arbustive cover",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
+
+ggplot(Data_Globale_Tahiti, aes(x = Her, y = S, fill = Hab)) +
+  
+  geom_point(shape = 21, size = 3, color = "black") +
+  
+  geom_smooth(aes(color = Hab),
+              method = "loess",
+              span = 1,
+              se = TRUE,
+              level = 0.95,
+              alpha = 0.2,
+              linewidth = 1) +
+  geom_smooth(aes(x = Her, y = S),
+              method = "loess",
+              span = 1,
+              color = "black",
+              se = TRUE,
+              linetype = "dashed",
+              linewidth = 1,
+              inherit.aes = FALSE) +
+  
+  labs(
+    x = "Grass cover",
+    y = "Species Richness",
+    fill = "Habitat type",
+    color = "Habitat type"
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Pastel2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  scale_color_brewer(
+    palette = "Dark2",
+    labels = c(
+      "Urbain" = "Urban",
+      "Suburbain" = "Suburban",
+      "Forêt" = "Forest",
+      "Prairie" = "Rural"
+    )
+  ) +
+  
+  theme_soundscape()
+```
+
+
+Boxplot par Indice
+```{r}
+# On crée un index numérique pour l’axe x
+DF_IA10<- DF_IA10 %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+
+# Dataset pour les rectangles de fond
+communes_bg <- DF_IA10 %>%
+  group_by(Commune) %>%
+  summarise(
+    xmin = min(x_id) - 0.5,
+    xmax = max(x_id) + 0.5
+  )
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = ADI), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = ADI),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "ADI", fill = "Commune") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = ACI), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = ACI),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "ACI", fill = "Commune") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = AEI), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = AEI),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "AEI", fill = "Commune") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = BIO), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = BIO),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "BIO", fill = "Commune") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = H), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = H),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "H", fill = "Commune") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  
+  # Boxplots ADI par site
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = M), 
+               fill = "#69b3a2", color = "black", width = 0.6, outlier.shape = NA) +
+  
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = M),
+              width = 0.2, size = 1, alpha = 0.6, color = "grey20") +
+  
+  # Couleur fond commune
+  scale_fill_brewer(palette = "Paired") +
+  
+  # Labels
+  labs(x = "Site", y = "M", fill = "Hab") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# On crée un index numérique pour l’axe x
+DF_IA10<- DF_IA10 %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+
+# Dataset pour les rectangles de fond
+communes_bg <- DF_IA10 %>%
+  group_by(Commune) %>%
+  summarise(
+    xmin = min(x_id) - 0.5,
+    xmax = max(x_id) + 0.5
+  )
+
+
+ggplot() +
+  
+  # Fond coloré par commune
+  geom_rect(data = communes_bg,
+            aes(xmin = xmin - 0.5, xmax = xmax + 0.5,
+                ymin = -Inf, ymax = Inf,
+                fill = Commune),
+            alpha = 0.08) +
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = H, color = "grey20"),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6) +
+    
+  # Boxplots séparés par P/A_Myna
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = H, fill = factor(`P/A_Myna`)),
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+
+  # Palette pour P/A_Myna
+  scale_fill_manual(values = c("0" = "#69b3a2", "1" = "#FDE725"),
+                    name = "Présence Myna") +
+  scale_color_manual(values = c("0" = "#69b3a2", "1" = "#FDE725"),
+                     guide = "none") +
+  
+  # Labels et thème
+  labs(x = "Site", y = "H", fill = "P/A_Myna") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+```{r}
+# On crée un index numérique pour l’axe x
+DF_IA10<- DF_IA10 %>%
+  mutate(x_id = as.numeric(factor(Enr)))
+ggplot() +
+
+  # Jitter points individuels
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = AEI, color = "grey20"),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6) +
+    
+  # Boxplots séparés par P/A_Natif
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = AEI, fill = factor(`P/A_Natif`)),
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+
+  # Palette pour P/A_Naitf
+  scale_fill_manual(values = c("0" = "#FCA5A5", "1" = "#BFE3C0"),
+                    name = "Présence Natif") +
+  scale_color_manual(values = c("0" = "#FCA5A5", "1" = "#BFE3C0"),
+                     guide = "none") +
+  
+  # Labels et thème
+  labs(x = "Site", y = "AEI", fill = "P/A Native") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = ADI),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = ADI,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "ADI") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = ACI),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = ACI,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "ACI") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = AEI),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = AEI,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "AEI") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = BIO),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = BIO,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "BIO") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = H),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = H,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "H") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot() +
+  
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = M),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  # Boxplots par type d’habitat
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = M,
+                   fill = factor(Hab)), #Ca qu'on modifie si on veut indiquer autre chose avec les indices, on put faire scale_fill_manual pour indiquer les couleurs qu'on veut au besoin
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  scale_fill_brewer(palette = "Pastel2",
+                    name = "Type d'habitat",
+                    labels = c(
+    "Urbain" = "Urban",
+    "Suburbain" = "Suburban",
+    "Forêt" = "Forest",
+    "Prairie" = "Rural"
+  )) +
+  
+  labs(x = "Site",
+       y = "M") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# 1️⃣ Préparer richesse native
+DF_IA10 <- DF_IA10 %>%
+  mutate(S_Natif = S - S_Exo)
+
+# 2️⃣ Résumé par site
+DF_richesse <- DF_IA10 %>%
+  group_by(Enr) %>%
+  summarise(
+    S_Exo = mean(S_Exo, na.rm = TRUE),
+    S_Natif = mean(S_Natif, na.rm = TRUE)
+  )
+
+# 3️⃣ Position verticale globale
+y_top <- max(DF_IA10$AEI, na.rm = TRUE) + 0.15
+y_bottom <- y_top - 0.08   # espacement entre les deux lignes
+
+# 4️⃣ Graphique
+ggplot() +
+
+  geom_jitter(data = DF_IA10,
+              aes(x = factor(Enr), y = AEI),
+              width = 0.2,
+              size = 1,
+              alpha = 0.6,
+              color = "grey20") +
+  
+  geom_boxplot(data = DF_IA10,
+               aes(x = factor(Enr), y = AEI, fill = factor(`P/A_Natif`)),
+               color = "black",
+               width = 0.5,
+               position = position_dodge(width = 0.7),
+               outlier.shape = NA) +
+  
+  # 🔵 Richesse native (affichée seulement si > 0)
+  geom_text(data = DF_richesse %>% filter(S_Natif > 0),
+            aes(x = factor(Enr),
+                y = y_top,
+                label = paste0("N=", round(S_Natif,1))),
+            size = 3,
+            fontface = "bold",
+            color = "#2E7D32",
+            inherit.aes = FALSE) +
+  
+  # 🔴 Richesse exotique (affichée seulement si > 0)
+  geom_text(data = DF_richesse %>% filter(S_Exo > 0),
+            aes(x = factor(Enr),
+                y = y_bottom,
+                label = paste0("E=", round(S_Exo,1))),
+            size = 3,
+            fontface = "bold",
+            color = "#B91C1C",
+            inherit.aes = FALSE) +
+  
+  scale_fill_manual(values = c("0" = "#FCA5A5", "1" = "#BFE3C0"),
+                    name = "Native presence") +
+  
+  labs(x = "Site",
+       y = "AEI") +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+On essaye de faire les correlations entre toutes les variables pour voir ce que ca donne..
+```{r}
+library(GGally)
+
+data_selected <- DF_IA10 %>%
+  select(
+    `D_R_P`,              # Indice acoustique
+    `D_M`,                # Richesse totale
+    `D_B`,            # Richesse exotique
+    `HSA`,
+    `Arb`,
+    `Arbu`,
+    `Her`,# Richesse native
+    S,
+    S_Exo,
+    `P/A_Myna`,# Exemple métrique paysage
+    `P/A_Natif`      # Exemple variable bio
+  )
+
+
+cor_fun <- function(data, mapping, method = "pearson", ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  test <- cor.test(x, y, method = method)
+  
+  r <- round(test$estimate, 2)
+  p <- test$p.value
+  
+  stars <- ifelse(p < 0.0001, "***",
+           ifelse(p < 0.001, "**",
+           ifelse(p < 0.01, "*", "")))
+  
+  label <- paste0("r = ", r, "\n", stars)
+  
+  ggplot(data = data, mapping = mapping) +
+    annotate("text", x = 0.5, y = 0.5, label = label, size = 4) +
+    theme_void()
+}
+
+
+fig3 <- ggpairs(
+  data_selected,
+  lower = list(continuous = wrap("points", alpha = 0.6, size = 1)),
+  upper = list(continuous = cor_fun),
+  diag  = list(continuous = wrap("densityDiag"))
+) +
+  theme_minimal()
+
+ggsave("Figure3_scatter_matrix.png",
+       plot = fig3,
+       width = 10,
+       height = 8,
+       dpi = 300)
+```
+
+```{r}
+theme_soundscape <- function() {
+  
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
+
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+```
+
+
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = Alt, y = "")) +
+  
+  geom_violin(
+    fill = "#CCAA99",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = HSA, y = "")) +
+  
+  geom_violin(
+    fill = "#D9D9D9",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = D_B, y = "")) +
+  
+  geom_violin(
+    fill = "#D9D9D9",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = Arb, y = "")) +
+  
+  geom_violin(
+    fill = "#B7D9B1",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = Arbu, y = "")) +
+  
+  geom_violin(
+    fill = "#B7D9B1",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = Her, y = "")) +
+  
+  geom_violin(
+    fill = "#B7D9B1",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+
+ggplot(DF_IA10, aes(x = rr_meteo, y = "")) +
+  
+  geom_violin(
+    fill = "#AEC6FF",
+    colour = "#334155",
+    alpha = 0.8,
+  ) +
+  
+  theme_soundscape()
+
+ggplot(DF_IA10, aes(x = tx_meteo, y = "")) +
+  
+  geom_violin(
+    fill = "#AEC6FF",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(DF_IA10, aes(x = S)) +
+  geom_bar(
+    fill = "#CCA9DD",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+ggplot(DF_IA10, aes(x = S_Exo)) +
+    geom_bar(
+    fill = "#CCA9DD",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = `P/A_Natif`)) +
+    geom_bar(
+    fill = "#CCA9DD",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+    geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.5
+  ) +
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+
+ggplot(Data_Globale_Tahiti, aes(x = `P/A_Myna`)) +
+    geom_bar(
+    fill = "#CCA9DD",
+    colour = "#334155",
+    alpha = 0.8
+  ) +
+    geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.5
+  ) +
+  theme_soundscape() +
+  
+  labs(
+    x = "",
+    y = ""
+  )
+```
+```{r}
+ggplot(Data_Globale_Tahiti, aes(x = Alt)) +
+  
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 15,
+    fill = "#CBD5F5",
+    colour = "white"
+  ) +
+  
+  geom_density(
+    colour = "#334155",
+    linewidth = 1.2
+  ) +
+  
+  theme_soundscape() +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Density of sampling sites"
+  )
+```
 

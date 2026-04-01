@@ -29,17 +29,7 @@ library(ggpubr)
 Traitement Indice acoustique
 Import sur un DF différent de tout les indices et audio en 5 et 10 minutes
 ```{r}
-chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_5m_0.3_8Khz"
-fichiers_xlsx <- list.files(
-  chemin,
-  pattern = "\\.xlsx$",
-  recursive = TRUE,
-  full.names = TRUE
-)
-IA_5m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
-IA_5m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
-
-chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_0.3_8Khz"
+chemin <- "~/Césure/Tahiti/Data_IA_Tahiti_10m_Pro"
 fichiers_xlsx <- list.files(
   chemin,
   pattern = "\\.xlsx$",
@@ -49,25 +39,8 @@ fichiers_xlsx <- list.files(
 IA_10m_0.3_8Khz <- lapply(fichiers_xlsx, read_excel)
 IA_10m_0.3_8Khz  <- bind_rows(lapply(fichiers_xlsx, read_excel))
 ```
-Pour DF_IA_5 et DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
+DF_IA10 : Simplification des Dataset pour avoir des indices acoustiques par fichier, 1 par ligne, on nettoie l'indice ACI pour n'avoir que la valeur principale pour un fichier (pas par fréquence de 1000 Hz). on supprimer les colonnes créé vide avec les NA
 ```{r}
-IA_5m_0.3_8Khz <- IA_5m_0.3_8Khz %>%
-  dplyr::select(where(~ !all(is.na(.)))) %>%
-  dplyr::select(-ADI_val.left_band_values,
-         -ADI_val.left_bandrange_values) %>%
-  rename(Enr = projet)
-
-IA_5m <- IA_5m_0.3_8Khz %>%
-  group_by(Enr, fichier) %>%
-  summarise(
-    ACI = first(ACI_val),
-    ADI = first(ADI_val.adi_left),
-    AEI  = first(AEI_val.aei_left),
-    BIO  = first(BIO_val.left_area),
-    H = first(H_val),
-    M = first(M_val),
-    .groups = "drop"
-  )
 IA_10m_0.3_8Khz <- IA_10m_0.3_8Khz %>%
   dplyr::select(where(~ !all(is.na(.)))) %>%
   rename(Enr = projet)
@@ -85,13 +58,6 @@ IA_10m <- IA_10m_0.3_8Khz %>%
     .groups = "drop"
   )
 
-DF_IA5 <- IA_5m %>%
-  left_join(
-    Data_Globale_Tahiti,
-    by = "Enr"
-  ) %>%
-  select(-Fichier,
-         -EAA)
 DF_IA10 <- IA_10m %>%
   left_join(
     Data_Globale_Tahiti,
@@ -102,26 +68,7 @@ DF_IA10 <- IA_10m %>%
 ```
 
 Nettoyer le nom dans DF_IA5, et On créer les variables adéquate pour l'heure + minute, l'heure et la date
-```{r}
-# Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
-f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA5$fichier, perl = TRUE)
-# Construire un datetime fiable depuis le nom du fichier
-DF_IA5$datetime <- as.POSIXct(
-  paste(
-    substr(f_clean, 10, 17),  # YYYYMMDD
-    substr(f_clean, 19, 24)   # HHMMSS
-  ),
-  format = "%Y%m%d %H%M%S",
-  tz = "Pacific/Tahiti"
-)
-# Colonnes pratiques
-DF_IA5$date  <- as.Date(DF_IA5$datetime, tz = "Pacific/Tahiti")
-DF_IA5$heure <- format(DF_IA5$datetime, "%H:%M", tz = "Pacific/Tahiti")
-DF_IA5$heure_num <- as.numeric(format(DF_IA5$datetime, "%H", tz = "Pacific/Tahiti"))
-DF_IA5 <- DF_IA5[order(DF_IA5$Enr, DF_IA5$datetime), ]
-```
 
-Pareil
 ```{r}
 # Nettoyer le nom (ignorer _000, sans modifier la colonne fichier)
 f_clean <- sub("_[0-9]{3}(?=\\.wav$)", "", DF_IA10$fichier, perl = TRUE)
@@ -141,58 +88,6 @@ DF_IA10$heure_num <- as.numeric(format(DF_IA10$datetime, "%H", tz = "Pacific/Tah
 DF_IA10<- DF_IA10[order(DF_IA10$Enr, DF_IA10$datetime), ]
 ```
 
-Ajout data météo quotidienne, précipitation jour et Température max, Faut rajouter pour DF_IA10 au besoin
-```{r}
-library(dplyr)
-library(tidyr)
-library(lubridate)
-Data_Meteo <- read_excel("Data_temp_prec.xlsx")
-
-DF_IA5$date <- as.Date(DF_IA5$date)
-Data_Meteo$date <- as.Date(Data_Meteo$date)
-Data_Meteo$rr <- as.numeric(Data_Meteo$rr)
-Data_Meteo$tx <- as.numeric(Data_Meteo$tx)
-
-DF_IA5 <- DF_IA5 %>%
-  mutate(id_row = row_number())
-
-# Split stations précip
-prec_long <- DF_IA5 %>%
-  select(id_row, date, Station_Prec) %>%
-  separate_rows(Station_Prec, sep = ",") %>%
-  mutate(Station_Prec = trimws(Station_Prec))
-
-# Join météo
-prec_join <- prec_long %>%
-  left_join(
-    Data_Meteo %>% select(nom_usuel, date, rr),
-    by = c("Station_Prec" = "nom_usuel", "date" = "date")
-  )
-
-# Moyenne par ligne originale
-prec_mean <- prec_join %>%
-  group_by(id_row) %>%
-  summarise(rr_meteo = mean(rr, na.rm = TRUE))
-
-temp_long <- DF_IA5 %>%
-  select(id_row, date, Station_Temp) %>%
-  separate_rows(Station_Temp, sep = ",") %>%
-  mutate(Station_Temp = trimws(Station_Temp))
-
-temp_join <- temp_long %>%
-  left_join(
-    Data_Meteo %>% select(nom_usuel, date, tx),
-    by = c("Station_Temp" = "nom_usuel", "date" = "date")
-  )
-
-temp_mean <- temp_join %>%
-  group_by(id_row) %>%
-  summarise(tx_meteo = mean(tx, na.rm = TRUE))
-
-DF_IA5 <- DF_IA5 %>%
-  left_join(prec_mean, by = "id_row") %>%
-  left_join(temp_mean, by = "id_row")
-```
 
 Ici on utilise un script déja tout frais payé par  (Iannarilli et al., 2025), pour essayer les trigonométrics sur nos différentes indices et de modéliser la fluctuation journalière. Bon ici il n'y a pas un code par indice ou dataset il faut chagner à chaque fois, il y a trois modèles uni, bim, et cathemeral, on compare l'AIC ou LRT à chaque fois entre ces trois, puis on peut faire le graph de la prédiction
 Ici on prend en compte que l'Enr en effets aléatoire, j'ai teste ca change rien si on prend commune à la place, mais mettre les deux on mange beaucoup de variance quand même.
@@ -201,50 +96,203 @@ We start by fitting a model that describes a *unimodal* activity pattern. This s
 
 ``` {r univsbim2}
 # Unimodal 
-unimodal <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) +
-                        (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)|Enr) ,
+unimodalADI <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
                         data = DF_IA10
                         )
-summary(unimodal)
+unimodalACI <- lmer(ACI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
+                        data = DF_IA10
+                        )
+unimodalAEI <- lmer(AEI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
+                        data = DF_IA10
+                        )
+unimodalBIO <- lmer(BIO ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
+                        data = DF_IA10
+                        )
+unimodalH <- lmer(H ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
+                        data = DF_IA10
+                        )
+unimodalM <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + (1|Commune),
+                        data = DF_IA10
+                        )
+summary(unimodalADI)
+summary(unimodalACI)
+summary(unimodalAEI)
+summary(unimodalBIO)
+summary(unimodalH)
+summary(unimodalM)
 ```
 
 To code for a *bimodal* activity pattern, we extend the model structure above by also including the second cosine term in equation 1 (i.e. third and forth terms in equation 2).
 
 ``` {r univsbim3, cache=TRUE, cache.path="cache/"}
 # Bimodal 
-bimodal <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (0+ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24)+ cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12)|Enr),
-                       data = DF_IA10
-                       )
-summary(bimodal)
+bimodalADI <- lmer(ADI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+bimodalACI <- lmer(ACI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+bimodalAEI <- lmer(AEI ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+bimodalBIO <- lmer(BIO ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+bimodalH <- lmer(H ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+bimodalM <- lmer(M ~ cos(2*pi*heure_num/24) + sin(2*pi*heure_num/24) + cos(2*pi*heure_num/12) + sin(2*pi*heure_num/12) + (1|Commune), data = DF_IA10)
+
+summary(bimodalADI)
+summary(bimodalACI)
+summary(bimodalAEI)
+summary(bimodalBIO)
+summary(bimodalH)
+summary(bimodalM)
 ```
 
 Finally, we use a model without any cosine term to describe a *cathemeral* activity patterns. We include a random intercept but cannot include a random slope due the structure of model itself. 
 
 ``` {r univsbim4}
-null_mod <- lmer(M ~ 1 + (1|Enr),
+null_modADI <- lmer(ADI ~ 1 + (1|Commune),
                       data = DF_IA10
                         )
-summary(null_mod)
+null_modACI <- lmer(ACI ~ 1 + (1|Commune),
+                      data = DF_IA10
+                        )
+null_modAEI <- lmer(AEI ~ 1 + (1|Commune),
+                      data = DF_IA10
+                        )
+null_modBIO <- lmer(BIO ~ 1 + (1|Commune),
+                      data = DF_IA10
+                        )
+null_modH <- lmer(H ~ 1 + (1|Commune),
+                      data = DF_IA10
+                        )
+null_modM <- lmer(M ~ 1 + (1|Commune),
+                      data = DF_IA10
+                        )
+summary(null_modADI)
+summary(null_modACI)
+summary(null_modAEI)
+summary(null_modBIO)
+summary(null_modH)
+summary(null_modM)
 ```
 
 **Model selection.** We can now proceed to compare the different model structures and associated hypotheses. We can do this using the Akaike Information Criterion (AIC; @AIC).
 
 ``` {r univsbim5}
-car::Anova(mod_ADI_uni)
-car::Anova(mod_ADI_bim)
 # AIC comparison
-AIC(null_mod, unimodal, bimodal)
+AIC(null_modADI, unimodalADI, bimodalADI)
+AIC(null_modACI, unimodalACI, bimodalACI)
+AIC(null_modAEI, unimodalAEI, bimodalAEI)
+AIC(null_modBIO, unimodalBIO, bimodalBIO)
+AIC(null_modH, unimodalH, bimodalH)
+AIC(null_modM, unimodalM, bimodalM)
 ```
 
 We can also compare the models using a Likelihood Ratio Test (LRT).
 
 ``` {r univsbim6}
-lrtest(null_mod, unimodal, bimodal)
+lrtest(null_modADI, unimodalADI, bimodalADI)
+lrtest(null_modACI, unimodalACI, bimodalACI)
+lrtest(null_modAEI, unimodalAEI, bimodalAEI)
+lrtest(null_modBIO, unimodalBIO, bimodalBIO)
+lrtest(null_modH, unimodalH, bimodalH)
+lrtest(null_modM, unimodalM, bimodalM)
 ```
 
 Both comparisons suggest that the bimodal pattern is the most supported model among those compared. We can, thus, conclude that coyotes have a bimodal activity pattern.
 
 We can also visually compare predicted activity curves based on these models. As in other examples, we first use the function `GLMMadaptive::effectPlotData` to predict the activity curves throughout the 24-hour cycle and then use `ggplot` to plot the results.
+
+```{r}
+combinaisons <- unique(DF_IA10[, c("Enr", "Commune")])
+
+newdat <- merge(
+  expand.grid(
+    heure_num = seq(min(DF_IA10$heure_num),
+                    max(DF_IA10$heure_num),
+                    length.out = 100),
+    Enr = unique(DF_IA10$Enr)
+  ),
+  combinaisons,
+  by = "Enr"
+)
+```
+
+
+```{r}
+library(merTools)
+
+pred_fun <- function(mod, newdat, name){
+
+  p <- predictInterval(
+    mod,
+    newdata = newdat,
+    level = 0.95,
+    n.sims = 1000,
+    include.resid.var = FALSE
+  )
+
+  data.frame(
+    heure_num = newdat$heure_num,
+    Enr = newdat$Enr,
+    Commune = newdat$Commune,
+    pred = p$fit,
+    low = p$lwr,
+    upp = p$upr,
+    Model = name
+  )
+}
+```
+
+``` {r univsbim7}
+predict_unimodalADI   <- pred_fun(unimodalADI, newdat, "Unimodal")
+predict_bimodalADI    <- pred_fun(bimodalADI, newdat, "Bimodal")
+predict_cathemeralADI <- pred_fun(null_modADI, newdat, "Cathemeral")
+
+predict_unimodalACI   <- pred_fun(unimodalACI, newdat, "Unimodal")
+predict_bimodalACI    <- pred_fun(bimodalACI, newdat, "Bimodal")
+predict_cathemeralACI <- pred_fun(null_modACI, newdat, "Cathemeral")
+
+predict_unimodalAEI   <- pred_fun(unimodalAEI, newdat, "Unimodal")
+predict_bimodalAEI    <- pred_fun(bimodalAEI, newdat, "Bimodal")
+predict_cathemeralAEI <- pred_fun(null_modAEI, newdat, "Cathemeral")
+
+predict_unimodalBIO   <- pred_fun(unimodalBIO, newdat, "Unimodal")
+predict_bimodalBIO    <- pred_fun(bimodalBIO, newdat, "Bimodal")
+predict_cathemeralBIO <- pred_fun(null_modBIO, newdat, "Cathemeral")
+
+predict_unimodalH   <- pred_fun(unimodalH, newdat, "Unimodal")
+predict_bimodalH    <- pred_fun(bimodalH, newdat, "Bimodal")
+predict_cathemeralH <- pred_fun(null_modH, newdat, "Cathemeral")
+
+predict_unimodalM   <- pred_fun(unimodalM, newdat, "Unimodal")
+predict_bimodalM    <- pred_fun(bimodalM, newdat, "Bimodal")
+predict_cathemeralM <- pred_fun(null_modM, newdat, "Cathemeral")
+```
+
+
+``` {r univsbim7b, class.source = "fold-hide", fig.cap="Predicted probability of activity by three hypotheses: unimodal, bimodal, and cathemeral; shading represented 95% confidence intervals."}
+plot_df <- rbind(
+  predict_unimodalM,#Changer le truc
+  predict_bimodalM,
+  predict_cathemeralM
+) %>%
+  group_by(Model, heure_num) %>%
+  summarise(
+    pred = mean(pred),
+    low = mean(low),
+    upp = mean(upp),
+    .groups = "drop"
+  )
+plot_df
+pl_shapes <- ggplot(
+  plot_df,
+  aes(x = heure_num, y = pred, fill = Model)
+) +
+  geom_line(aes(colour = Model)) +
+  geom_ribbon(aes(ymin = low, ymax = upp), alpha = 0.3) +
+  labs(
+    x = "Hours",
+    y = "M",
+  )
+pl_shapes
+```
+
+We can test other hypotheses related to the shape of the activity curve (e.g., three or more peaks) for our target species by simply adding additional cosine terms to the model structure and then comparing the different structures using AIC or LRT. However, going beyond two peaks might be computationally challenging, especially when a random slope is included. In these cases, one might need to consider reducing model complexity by only including a random intercept.
 
 ```{r}
 newdat <- expand.grid(
@@ -281,15 +329,35 @@ pred_fun <- function(mod, newdat, name){
 ```
 
 ``` {r univsbim7}
-predict_unimodal   <- pred_fun(unimodal, newdat, "Unimodal")
-predict_bimodal    <- pred_fun(bimodal, newdat, "Bimodal")
-predict_cathemeral <- pred_fun(null_mod, newdat, "Cathemeral")
+predict_unimodalADI   <- pred_fun(unimodalADI, newdat, "Unimodal")
+predict_bimodalADI    <- pred_fun(bimodalADI, newdat, "Bimodal")
+predict_cathemeralADI <- pred_fun(null_modADI, newdat, "Cathemeral")
+
+predict_unimodalACI   <- pred_fun(unimodalACI, newdat, "Unimodal")
+predict_bimodalACI    <- pred_fun(bimodalACI, newdat, "Bimodal")
+predict_cathemeralACI <- pred_fun(null_modACI, newdat, "Cathemeral")
+
+predict_unimodalAEI   <- pred_fun(unimodalAEI, newdat, "Unimodal")
+predict_bimodalAEI    <- pred_fun(bimodalAEI, newdat, "Bimodal")
+predict_cathemeralAEI <- pred_fun(null_modAEI, newdat, "Cathemeral")
+
+predict_unimodalBIO   <- pred_fun(unimodalBIO, newdat, "Unimodal")
+predict_bimodalBIO    <- pred_fun(bimodalBIO, newdat, "Bimodal")
+predict_cathemeralBIO <- pred_fun(null_modBIO, newdat, "Cathemeral")
+
+predict_unimodalH   <- pred_fun(unimodalH, newdat, "Unimodal")
+predict_bimodalH    <- pred_fun(bimodalH, newdat, "Bimodal")
+predict_cathemeralH <- pred_fun(null_modH, newdat, "Cathemeral")
+
+predict_unimodalM   <- pred_fun(unimodalM, newdat, "Unimodal")
+predict_bimodalM    <- pred_fun(bimodalM, newdat, "Bimodal")
+predict_cathemeralM <- pred_fun(null_modM, newdat, "Cathemeral")
 ```
 
 
 ``` {r univsbim7b, class.source = "fold-hide", fig.cap="Predicted probability of activity by three hypotheses: unimodal, bimodal, and cathemeral; shading represented 95% confidence intervals."}
 plot_df <- rbind(
-  predict_unimodal,
+  predict_unimodal,#Changer le truc
   predict_bimodal,
   predict_cathemeral
 ) %>%
@@ -310,4 +378,3 @@ pl_shapes <- ggplot(
 pl_shapes
 ```
 
-We can test other hypotheses related to the shape of the activity curve (e.g., three or more peaks) for our target species by simply adding additional cosine terms to the model structure and then comparing the different structures using AIC or LRT. However, going beyond two peaks might be computationally challenging, especially when a random slope is included. In these cases, one might need to consider reducing model complexity by only including a random intercept.

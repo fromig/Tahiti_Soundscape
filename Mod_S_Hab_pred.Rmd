@@ -1,0 +1,279 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-03-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+Chargement Dataset Principale + setwd
+```{r}
+library(readxl)
+Data_Globale_Tahiti <- read_excel("Data_Globale_Tahiti.xlsx")
+View(Data_Globale_Tahiti)
+setwd("~/Césure/Tahiti")
+```
+Packages nécessaires pour analyses et exportation des tableaux
+```{r}
+library(tuneR)
+library(seewave)
+library(soundecology)
+library(lubridate)
+library(writexl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(corrplot)
+library(performance)
+library(see)
+library(lmerTest)
+library(tidyr)
+library(tibble)
+library(ggeffects)
+library(tidyverse)
+library(broom.mixed)
+```
+
+Centré_réduire les données pour modélisation, Dataset des sites (n=51), scale des variables nécessaires pour analyses
+```{r}
+Data_Global_sc <- Data_Globale_Tahiti %>%
+  mutate(
+    across(
+      c(`Alt`, `P_J_Moy`,`T_Max_M`, `D_B`,`HSA`,`Arb`, `Arbu`, `Her`),
+      ~ as.numeric(scale(.)),
+      .names = "{.col}_sc"
+    )
+  )
+```
+
+Les 4 prédicteursde communauté aviaire avec toutes les végétations, avec deux gaussian et deux binomial, un effet Commune car la variable réponse ne bouge pas sur Enr, et pas de prise en compte de la météo (une moyenne pour un site, peu précis, pas d'hypothèse d'influence possible.
+```{r}
+mod_S_Hab <- lmer(
+  S ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_SExo_Hab <- lmer(
+  S_Exo ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+  data = Data_Global_sc,
+  REML = FALSE
+)
+
+mod_PANatif_Hab <- glmer(
+  `P/A_Natif` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+
+mod_PAMyna_Hab <- glmer(
+  `P/A_Myna` ~
+ `HSA_sc`+`Alt_sc` +`D_B_sc` +`Arb_sc` +`Arbu_sc` +`Her_sc`+(1 | Commune),
+   family = binomial(link = "logit"),
+  data = Data_Global_sc,
+)
+#test de l'ancienne VA de proprotion natif/exotique
+mod_NE_Hab <- lmer(
+  `N/E` ~
+ `HSA(%)` +`Alt(m)` +`D_B(m)` +`Arb(%)` +`Arbu(%)` +`Her(%)`+(1 | Commune),
+  data = Data_Global_Scale,
+   REML = FALSE
+)
+```
+Exportation des tableaux GLM et Anova, attention a exportée après l'analyse du modèle car même nom de variable entre les modèles tot, arb, arbu et her.
+
+```{r}
+##Revenir à l’échelle réelle (%)
+mean_her <- mean(Data_Global_sc$`Arbu`, na.rm = TRUE)
+sd_her   <- sd(Data_Global_sc$`Arbu`, na.rm = TRUE)
+mean_arbu <- mean(Data_Global_sc$`Arbu`, na.rm = TRUE)
+sd_arbu   <- sd(Data_Global_sc$`Arbu`, na.rm = TRUE)
+mean_alt <- mean(Data_Global_sc$`Alt`, na.rm = TRUE)
+sd_alt   <- sd(Data_Global_sc$`Alt`, na.rm = TRUE)
+mean_db <- mean(Data_Global_sc$`D_B`, na.rm = TRUE)
+sd_db   <- sd(Data_Global_sc$`D_B`, na.rm = TRUE)
+mean_hsa <- mean(Data_Global_sc$`HSA`, na.rm = TRUE)
+sd_hsa   <- sd(Data_Global_sc$`HSA`, na.rm = TRUE)
+mean_S <- mean(Data_Global_sc$`S`, na.rm = TRUE)
+sd_S   <- sd(Data_Global_sc$`S`, na.rm = TRUE)
+mean_SExo <- mean(Data_Global_sc$`S_Exo`, na.rm = TRUE)
+sd_SExo   <- sd(Data_Global_sc$`S_Exo`, na.rm = TRUE)
+```
+```{r}
+theme_soundscape <- function() {
+  
+  theme_minimal() +
+    
+  theme(
+    panel.background = element_rect(fill = "#F8FAFC", colour = NA),
+    plot.background  = element_rect(fill = "#F8FAFC", colour = NA),
+
+    panel.grid.major.y = element_line(color = "#CBD5E1", linewidth = 0.4),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.text  = element_text(color = "#64748B", size = 11),
+    axis.title = element_text(color = "#64748B", size = 12, face = "bold"),
+
+    axis.line = element_line(color = "#64748B", linewidth = 0.5),
+    axis.ticks = element_line(color = "#64748B"),
+
+    legend.background = element_rect(fill = "#F8FAFC"),
+    legend.text = element_text(color = "#64748B"),
+    legend.title = element_text(color = "#64748B", face = "bold")
+  )
+}
+```
+
+
+```{r}
+pred_S_Arbu <- ggpredict(
+  mod_S_Hab,
+  terms = "Arbu_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_S_Arbu, aes(x = x* sd_arbu+mean_arbu, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Arbustive cover (%)",
+    y = "Predicted Total Richness (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_SExo_Arbu <- ggpredict(
+  mod_SExo_Hab,
+  terms = "Arbu_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_SExo_Arbu, aes(x = x* sd_arbu+mean_arbu, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Arbustive cover (%)",
+    y = "Predicted Exotic Richness (±95% CI)"
+  ) +
+  
+  theme_soundscape() 
+
+pred_PANatif_Her <- ggpredict(
+  mod_PANatif_Hab,
+  terms = "Her_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_PANatif_Her, aes(x = x* sd_her+mean_her, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#B7D9B1"
+  ) +
+  
+  labs(
+    x = "Herbaceous cover (%)",
+    y = "Predicted Presence Absence Native (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+
+```{r}
+pred_PANatif_Alt <- ggpredict(
+  mod_PANatif_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_PANatif_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted Presence Absence Native (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+
+pred_PAMyna_Alt <- ggpredict(
+  mod_PAMyna_Hab,
+  terms = "Alt_sc [all]"
+)
+
+
+##Graphique
+ggplot(pred_PAMyna_Alt, aes(x = x* sd_alt+mean_alt, y = predicted)) +
+  
+  geom_line(size = 1.2, colour = "#334155") +
+  
+  geom_ribbon(
+    aes(ymin = conf.low, ymax = conf.high),
+    alpha = 0.35,
+    fill = "#CCAA99"
+  ) +
+  
+  labs(
+    x = "Altitude (m)",
+    y = "Predicted Presence Absence Myna (±95% CI)"
+  ) +
+  
+  theme_soundscape()
+```
+
